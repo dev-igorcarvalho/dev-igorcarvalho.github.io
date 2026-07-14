@@ -1,4 +1,4 @@
 [
-  { "slug": "boas-vindas", "titulo": "Boas-vindas" },
-  { "slug": "exemplo-arquitetura", "titulo": "Exemplo: Arquitetura" }
+  { "slug": "boas-vindas", "titulo": "About" },
+  { "slug": "context-driven-design", "titulo": "Context-Driven Design" }
 ]

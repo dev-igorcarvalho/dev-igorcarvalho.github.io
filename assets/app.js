@@ -8,6 +8,8 @@
   var conteudo = document.getElementById("conteudo");
   var nav = document.querySelector(".sidebar nav");
   var botaoTema = document.getElementById("toggle-tema");
+  var campoBusca = document.getElementById("busca-artigos");
+  var mensagemVazia = document.querySelector(".busca__vazio");
 
   // ---------- Tema ----------
 
@@ -44,6 +46,38 @@
       link.setAttribute("data-article", item.slug);
       link.textContent = item.titulo;
       nav.appendChild(link);
+    });
+  }
+
+  function normalizar(texto) {
+    return texto
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+  }
+
+  function filtrarArtigos() {
+    if (!nav || !campoBusca) return;
+    var termo = normalizar(campoBusca.value.trim());
+    var links = nav.querySelectorAll("a[data-article]");
+    var algumVisivel = false;
+    links.forEach(function (link) {
+      var corresponde = !termo || normalizar(link.textContent).indexOf(termo) !== -1;
+      link.hidden = !corresponde;
+      if (corresponde) algumVisivel = true;
+    });
+    if (mensagemVazia) mensagemVazia.hidden = algumVisivel || links.length === 0;
+  }
+
+  if (campoBusca) {
+    campoBusca.addEventListener("input", filtrarArtigos);
+    campoBusca.addEventListener("keydown", function (evento) {
+      if (evento.key !== "Enter") return;
+      var primeiroVisivel = nav && nav.querySelector("a[data-article]:not([hidden])");
+      if (primeiroVisivel) {
+        evento.preventDefault();
+        primeiroVisivel.click();
+      }
     });
   }
 

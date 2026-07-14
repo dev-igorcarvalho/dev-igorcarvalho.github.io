@@ -21,9 +21,13 @@
     <aside class="sidebar">
       <p class="sidebar__brand">IGOR CARVALHO</p>
       <p class="sidebar__tagline">notas de engenharia · software &amp; IA</p>
+      <div class="busca">
+        <input type="search" id="busca-artigos" class="busca__campo" placeholder="Buscar artigos…" aria-label="Buscar artigos pelo título">
+      </div>
       <nav>
         <!-- itens montados em runtime por assets/app.js a partir de articles/manifest.json -->
       </nav>
+      <p class="busca__vazio" hidden>Nenhum artigo encontrado.</p>
       <div class="sidebar__footer">
         <button id="toggle-tema" class="theme-toggle" type="button">☾ tema escuro</button>
       </div>

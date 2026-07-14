@@ -1,0 +1,765 @@
+<article class="sheet">
+  <div class="stamp">preprint · cs.SE · rev. 5 · july 2026</div>
+
+  <div class="running-head"><span>Engineering Preprint</span><span>Context-Driven Design</span></div>
+
+  <header class="titleblock">
+    <h1>Context-Driven Design: Self-Contained Vertical Modules for Go Services under Human and Machine Context Constraints</h1>
+    <p class="subtitle">A pragmatic architecture for locality of behavior, dual-transport delivery (JSON&nbsp;API and server-rendered hypermedia), single-binary deployment, and testability</p>
+    <p class="author">Igor Barbosa de Carvalho<span class="affil"> · <a rel="author me" href="https://www.linkedin.com/in/igor-carvalho-se/?locale=en-US">linkedin.com/in/igor-carvalho-se</a></span></p>
+    <p class="meta"><b>Revision 5</b> · July 2026 · Go ≥ 1.21 · Echo v4 · Status: working paper</p>
+  </header>
+
+  <section class="abstract">
+    <h2>Abstract</h2>
+    <p>Purist layered architectures — Clean, Onion, Hexagonal — impose indirection costs that Go's design philosophy neither requires nor rewards. In parallel, a new consumer of source code has emerged: the large-language-model coding agent, whose finite context window converts architectural dispersion into a measurable, per-request cost. This paper formalizes <i>Context-Driven Design</i> (CDD), a vertical-slice architecture in which every feature is a self-contained module that owns its configuration, business rules, persistence, transport, and user interface, and attaches to a thin platform through an explicit dependency container. We present a reference implementation on the Echo framework covering module wiring; a machine-facing JSON API transport (§5); a human-facing hypermedia (HTMX) transport compiled into a single binary via <code>go:embed</code> (§6); lifecycle orchestration with graceful shutdown (§7); and a comparison of the static dependency container against a generics-based registry (§4.1). We then audit the original specification and identify nine gaps — including transport conflation, lifecycle defects, an error-handling fall-through, and undefined inter-module communication — and resolve all nine in this revision — the defects inline in the corrected listings, the design omissions as concrete specifications in §10. We argue that <i>delete-ability</i> and <i>context-window footprint</i> deserve treatment as first-class non-functional requirements, and give the latter a concrete, CI-enforceable measure: the Feature Context Footprint (§3.3).</p>
+    <p class="keywords"><b>Keywords —</b> Go; software architecture; vertical slice; modular monolith; deployment topology; locality of behavior; Echo; bounded context; HTMX; hypermedia; JSON API; LLM-assisted development; testability.</p>
+  </section>
+
+  <nav class="toc">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#s1">Introduction</a></li>
+      <li><a href="#s2">Background and Related Work</a></li>
+      <li><a href="#s3">The Context-Driven Design Method</a></li>
+      <li><a href="#s4">The Platform Contract</a></li>
+      <li><a href="#s5">Transport I — The JSON API</a></li>
+      <li><a href="#s6">Transport II — Serving Hypermedia (HTMX)</a></li>
+      <li><a href="#s7">Composition Root and Lifecycle</a></li>
+      <li><a href="#s8">Testability</a></li>
+      <li><a href="#s9">Trade-off Analysis</a></li>
+      <li><a href="#s10">Identified Gaps and Remediations</a></li>
+      <li><a href="#s11">Conclusion and Future Work</a></li>
+      <li class="refs"><a href="#refs">References</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="s1">1. Introduction</h2>
+  <p>Go's founding premise — clarity over abstraction — sits uneasily with architectural doctrines imported from the Java and C# ecosystems. Clean Architecture [1] and Hexagonal Architecture [2] mandate indirection whose cost is fixed (ports, adapters, per-layer data models, mapping code) but whose benefit is contingent on a volatility that most CRUD-heavy services never exhibit. In Go the tax compounds: single-method interfaces declared "just in case," package sprawl that turns a one-line change into a four-directory expedition, and translation layers that outweigh the business rules they claim to protect.</p>
+  <p>A second, newer pressure has made the cost of dispersion explicit. LLM coding agents are now routine collaborators, and their working memory is a context window. An architecture that scatters a single feature across <code>controllers/</code>, <code>usecases/</code>, <code>entities/</code>, and <code>gateways/</code> forces one of two failure modes on the agent: assemble a massive cross-cutting context (token cost, truncation, retrieval error) or operate on a partial view and produce <i>architectural hallucinations</i> — plausible code that references layers, interfaces, or conventions that do not exist in the repository. What was once an ergonomic complaint is now a metered expense, paid on every request.</p>
+  <p>Context-Driven Design answers both pressures with one move: each feature is a vertical slice, packaged as a self-contained module that plugs into a deliberately thin platform. The name is a double entendre by design — <i>context</i> as in the bounded context of domain-driven design [3], and <i>context</i> as in the context window of the machine reader.</p>
+  <p>This paper makes four contributions:</p>
+  <ol class="plain">
+    <li><b>C1.</b> A formalization of CDD as six principles (§3.1), including two non-functional requirements rarely stated explicitly: <i>delete-ability</i> and <i>context budget</i>, the latter operationalized by the Feature Context Footprint metric (§3.3).</li>
+    <li><b>C2.</b> A reference implementation: an explicit dependency container (weighed against a generics-based registry in §4.1), plugin-style module wiring on the Echo framework, single-binary hypermedia delivery via <code>go:embed</code>, and a corrected process lifecycle (§4, §7).</li>
+    <li><b>C3.</b> A clean separation of the two transport surfaces that the original specification conflated — a machine-facing JSON API (§5) and a human-facing HTMX hypermedia layer (§6) — layered over one shared service core.</li>
+    <li><b>C4.</b> An audit of the original specification identifying nine gaps with severities — all nine resolved in this revision, the defects inline in §5–§8 and the design omissions as specifications in §10.1–§10.5.</li>
+  </ol>
+  <p>A note on notation: the gap identifiers G1–G9 used throughout are cross-references into the consolidated audit of §10, where Table 2 defines each. The paper deliberately presents the corrected design first and the diagnosis afterward; a G-reference encountered before §10 simply marks the point where that gap's fix lives.</p>
+
+  <h2 id="s2">2. Background and Related Work</h2>
+  <p><b>Layered doctrines.</b> Clean [1] and Hexagonal [2] architectures optimize for substitutability of the outer rings — swap the database, swap the delivery mechanism — under the assumption that such substitutions are frequent enough to amortize permanent indirection. The Go community's counter-position is idiomatic rather than doctrinal: "a little copying is better than a little dependency" [8], interfaces belong to consumers rather than implementations, and style guidance such as Uber's [7] favors explicit construction and fail-fast validation over container magic.</p>
+  <p><b>Vertical slices and deployment topology.</b> CDD is a Go-native instantiation of Vertical Slice Architecture [4], with one deliberate divergence: where .NET slices typically route requests through a mediator/dispatch layer, CDD wires everything at compile time with plain constructors, so the compiler — not a runtime dispatcher — is the integration test. On deployment, a word of caution is owed: the <i>default</i> shape is a modular monolith [9], but the architecture itself is deployment-agnostic. A module's only contract is <code>Initialize(*server.Container) error</code>, so it is the composition root — not the module — that fixes the topology. One binary attaching every module is a monolith; one binary per module is a microservice fleet; any grouping in between is a wiring decision in <code>main()</code> (§11, Listing 15). "Monolith" names a starting point, never a ceiling.</p>
+  <p><b>Relation to hub-and-spoke.</b> Figure 1 invites the comparison: a Container at the center, modules radiating outward — a hub-and-spoke topology in the integration-architecture sense [11]. The analogy holds where it is useful. Like a hub, the platform is the single shared point through which capabilities are provisioned; like spokes, modules know the hub and never each other, so attaching the <i>N</i>+1th module costs one edge rather than <i>N</i>. But the analogy breaks exactly where it matters operationally: in messaging-era hub-and-spoke, the hub mediates every message at <i>runtime</i>, concentrating throughput and becoming a single point of failure. CDD's hub mediates only at <i>boot</i> — once <code>Initialize</code> returns, requests flow from router to handler to database with no central broker on the path. CDD is therefore hub-and-spoke in its dependency graph and point-to-point in its data plane, and the facade protocol (G4, §10.1) extends the same discipline to the few sanctioned spoke-to-spoke edges.</p>
+  <p><b>Locality of behavior.</b> Gross states the principle for user interfaces: the behavior of a unit of code should be obvious by inspecting that unit alone [5], a stance elaborated into a full hypermedia-driven methodology in [6]. CDD generalizes the principle from the UI element to the entire slice — SQL, rules, routes, and markup live and die inside one folder — and adopts HTMX precisely because it keeps rendering on the server, collapsing the frontend/backend split that would otherwise reintroduce dispersion through a second repository and build pipeline.</p>
+
+  <h2 id="s3">3. The Context-Driven Design Method</h2>
+
+  <h3 id="s3-1">3.1 Principles</h3>
+  <ol class="plain">
+    <li><b>P1 — Locality of behavior.</b> The unit of comprehension, code review, and prompt assembly is the module folder. Everything required to understand a feature — rules, queries, routes, templates, configuration — lives inside it [5].</li>
+    <li><b>P2 — Modules are plugins.</b> A module exposes exactly one entry point, <code>Initialize(*server.Container) error</code>. It is <i>attached</i> to the application at boot, never woven through it.</li>
+    <li><b>P3 — The platform is boring.</b> <code>internal/platform</code> provides infrastructure (router, connection pools, telemetry) and must contain zero business vocabulary. Dependencies point in one direction only: module → platform.</li>
+    <li><b>P4 — Wiring is code.</b> No DI container, no reflection, no code generation. The Go compiler is the dependency injector; a missing dependency is a compile error, not a runtime surprise.</li>
+    <li><b>P5 — Delete-ability is the metric.</b> Removing a feature must be <code>rm -rf internal/&lt;feature&gt;</code> plus one line in the composition root. If deletion requires surgery, locality was already violated. The guarantee covers code; data follows a protocol — the module's final migration is its teardown (§10.3) — because code deletes in O(1) and data never does.</li>
+    <li><b>P6 — The context budget is a non-functional requirement.</b> A slice should fit, whole, inside the working context of an agent — or a new hire. Token footprint per feature is tracked like binary size or p99 latency; §3.3 makes the budget measurable.</li>
+  </ol>
+
+  <h3 id="s3-2">3.2 Canonical Topology</h3>
+  <p>Listing 1 shows the directory layout. Three refinements over the original specification are visible immediately: the transport layer is split into <code>api.go</code> and <code>web.go</code> — one file per audience, anticipating §5–§6 and remediating gap <span class="gid">G1</span>; the module owns its own <code>migrations/</code> directory, so the schema of a bounded context travels with the context (<span class="gid">G7</span>, §10.3); and <code>facade.go</code> marks the module's only sanctioned surface to siblings (<span class="gid">G4</span>, §10.1).</p>
+
+  <figure class="listing">
+<pre><code class="nohighlight">meu-projeto/
+├── cmd/
+│   └── api/
+│       └── main.go            # composition root (§7)
+├── internal/
+│   ├── auth/                  # ← one bounded context, one folder
+│   │   ├── templates/         #   hypermedia fragments (§6)
+│   │   │   ├── login.html
+│   │   │   └── _form.html
+│   │   ├── migrations/        #   pure SQL, owned by the module (§10.3)
+│   │   ├── migrations.go      #   go:embed of the SQL above (§10.3)
+│   │   ├── config.go          #   env validation, fail-fast
+│   │   ├── service.go         #   business rules (pure Go)
+│   │   ├── repository.go      #   explicit SQL
+│   │   ├── api.go             #   transport I  — JSON (§5)
+│   │   ├── web.go             #   transport II — HTMX (§6)
+│   │   ├── facade.go          #   sanctioned surface to siblings (§10.1)
+│   │   ├── routes.go          #   route registration
+│   │   └── module.go          #   wiring: Initialize(deps)
+│   └── platform/
+│       ├── database/
+│       │   ├── postgres.go
+│       │   └── migrate.go     #   one ledger, all modules (§10.3)
+│       └── server/
+│           ├── container.go   #   the platform contract (§4)
+│           └── echo.go        #   middleware + route governance (§10.2, §10.5)
+├── go.mod
+└── go.sum</code></pre>
+    <figcaption><b>Listing 1.</b> Canonical CDD topology. The slice is hermetic: deleting <code>internal/auth</code> removes the feature entirely (P5). The <code>api.go</code> / <code>web.go</code> split is new in this revision.</figcaption>
+  </figure>
+
+  <figure class="fig">
+    <svg viewBox="0 0 760 420" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="CDD topology: composition root builds a container, which is injected into sibling modules that never import each other">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0L10,5L0,10z" fill="var(--ink)"/>
+        </marker>
+      </defs>
+      <g font-family="ui-monospace,SF Mono,Menlo,Consolas,monospace" font-size="12">
+        <!-- composition root -->
+        <rect x="270" y="14" width="220" height="46" rx="3" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.3"/>
+        <text x="380" y="33" text-anchor="middle" font-weight="700">cmd/api</text>
+        <text x="380" y="49" text-anchor="middle" font-size="10.5" fill="var(--muted)">composition root · run()</text>
+        <!-- arrow to container -->
+        <line x1="380" y1="60" x2="380" y2="94" stroke="var(--ink)" stroke-width="1.2" marker-end="url(#ah)"/>
+        <text x="392" y="81" font-size="10.5" fill="var(--muted)">builds &amp; wires</text>
+        <!-- container -->
+        <rect x="205" y="98" width="350" height="56" rx="3" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.3"/>
+        <text x="380" y="120" text-anchor="middle" font-weight="700" font-size="13">platform.Container</text>
+        <text x="380" y="139" text-anchor="middle" font-size="10.5" fill="var(--muted)">Echo · DB · Logger · Tracer · Migrator</text>
+        <!-- arrows to modules -->
+        <line x1="300" y1="154" x2="205" y2="204" stroke="var(--ink)" stroke-width="1.2" marker-end="url(#ah)"/>
+        <line x1="460" y1="154" x2="555" y2="204" stroke="var(--ink)" stroke-width="1.2" marker-end="url(#ah)"/>
+        <text x="380" y="184" text-anchor="middle" font-size="10.5" fill="var(--muted)">injected as *server.Container</text>
+        <!-- auth module -->
+        <rect x="60" y="208" width="300" height="170" rx="3" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.3"/>
+        <rect x="60" y="208" width="300" height="26" fill="var(--code-bg)" stroke="var(--ink)" stroke-width="1.3"/>
+        <text x="210" y="226" text-anchor="middle" font-weight="700">internal/auth</text>
+        <g font-size="10.5">
+          <rect x="74"  y="244" width="132" height="24" rx="2" fill="var(--paper)" stroke="var(--rule)"/><text x="82" y="260">config.go</text>
+          <rect x="74"  y="274" width="132" height="24" rx="2" fill="var(--paper)" stroke="var(--rule)"/><text x="82" y="290">service.go</text>
+          <rect x="74"  y="304" width="132" height="24" rx="2" fill="var(--paper)" stroke="var(--rule)"/><text x="82" y="320">repository.go</text>
+          <rect x="74"  y="334" width="132" height="24" rx="2" fill="var(--paper)" stroke="var(--rule)"/><text x="82" y="350">module.go</text>
+          <rect x="214" y="244" width="132" height="24" rx="2" fill="var(--paper)" stroke="var(--accent)" stroke-width="1.4"/><text x="222" y="260" fill="var(--accent)" font-weight="700">api.go · JSON</text>
+          <rect x="214" y="274" width="132" height="24" rx="2" fill="var(--paper)" stroke="var(--accent)" stroke-width="1.4"/><text x="222" y="290" fill="var(--accent)" font-weight="700">web.go · HTMX</text>
+          <rect x="214" y="304" width="132" height="24" rx="2" fill="var(--paper)" stroke="var(--rule)"/><text x="222" y="320">templates/*.html</text>
+          <rect x="214" y="334" width="132" height="24" rx="2" fill="var(--paper)" stroke="var(--rule)"/><text x="222" y="350">migrations/</text>
+        </g>
+        <!-- billing module -->
+        <rect x="400" y="208" width="300" height="170" rx="3" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.3"/>
+        <rect x="400" y="208" width="300" height="26" fill="var(--code-bg)" stroke="var(--ink)" stroke-width="1.3"/>
+        <text x="550" y="226" text-anchor="middle" font-weight="700">internal/billing</text>
+        <rect x="414" y="248" width="272" height="110" rx="2" fill="none" stroke="var(--rule)" stroke-dasharray="4 4"/>
+        <text x="550" y="300" text-anchor="middle" font-size="11" font-style="italic" fill="var(--muted)" font-family="Charter,Georgia,serif">same anatomy —</text>
+        <text x="550" y="318" text-anchor="middle" font-size="11" font-style="italic" fill="var(--muted)" font-family="Charter,Georgia,serif">zero imports from auth</text>
+        <!-- no-import mark -->
+        <text x="380" y="288" text-anchor="middle" font-size="10" fill="var(--muted)">no direct</text>
+        <text x="380" y="300" text-anchor="middle" font-size="10" fill="var(--muted)">imports</text>
+        <text x="380" y="320" text-anchor="middle" font-size="16" fill="var(--danger)" font-weight="700">×</text>
+        <!-- footnote -->
+        <text x="380" y="408" text-anchor="middle" font-size="11" font-style="italic" fill="var(--muted)" font-family="Charter,Georgia,serif">Dependencies point upward only: module → platform. Siblings never import each other (facade excepted, G4).</text>
+      </g>
+    </svg>
+    <figcaption><b>Figure 1.</b> Module topology. The composition root builds the container; modules consume it and remain mutually invisible. Transport files (highlighted) are the only audience-specific code in the slice.</figcaption>
+  </figure>
+
+  <h3 id="s3-3">3.3 Quantifying the Context Budget: The Feature Context Footprint</h3>
+  <p>P6 remains rhetoric until it is measurable, so this section gives it a number. Define <i>MinSet</i>(<i>f</i>) as the minimal set of files sufficient to modify feature <i>f</i> correctly — everything a competent agent (or developer) must hold in working context to change <i>f</i> without hallucinating structure. The <i>Feature Context Footprint</i> is the token mass of that set. In an arbitrary architecture, <i>MinSet</i> must be <i>discovered</i>, and the discovery itself consumes context; CDD's structural claim is that <i>MinSet</i> is statically enumerable — the module folder, the platform contract, and whichever facades the module imports:</p>
+  <div class="equation">FCF(<i>f</i>) = <i>T</i>(module<sub><i>f</i></sub>) + <i>T</i>(container) + Σ<sub><i>g</i> ∈ facades(<i>f</i>)</sub> <i>T</i>(<i>g</i>)<span class="eqno">(1)</span></div>
+  <p>where <i>T</i>(·) is a token count, approximated for Go source by bytes ÷ 3.5 — tokenizer-dependent, but stable enough for comparison. From (1) follows the <i>locality ratio</i>, the fraction of a feature's required context that the feature itself owns:</p>
+  <div class="equation"><i>L</i>(<i>f</i>) = <i>T</i>(module<sub><i>f</i></sub>) / FCF(<i>f</i>)<span class="eqno">(2)</span></div>
+  <p>CDD targets <i>L</i> ≥ 0.9, and the target is not arbitrary: the container is deliberately tiny (P3) and facades deliberately narrow (§10.1), so every point of <i>L</i> lost is either a fattening platform or a widening facade — precisely the two failure modes §4 and §10.1 exist to police. In a layered codebase <i>L</i> is both lower and, worse, undefined without dynamic discovery: the numerator has no folder.</p>
+  <p>The budget itself is an inequality, FCF(<i>f</i>) ≤ <i>B</i>. What sets <i>B</i> is no longer the raw window — modern windows exceed most codebases — but <i>effective attention</i>: retrieval quality degrades measurably as relevant material dilutes across long contexts [12]. As an engineering bound rather than a standard, this paper proposes</p>
+  <div class="equation">FCF(<i>f</i>) ≤ <i>B</i>, &nbsp;<i>B</i> ≈ 30–50 k tokens (~120–200 KB of source)<span class="eqno">(3)</span></div>
+  <p>comfortably inside the regime where current models retrieve reliably; a slice approaching <i>B</i> is a candidate for splitting along an interior sub-boundary. Measurement is a shell one-liner — <code>find internal/auth -type f | xargs wc -c</code>, divided by 3.5, plus the container and imported facade files — cheap enough to run in CI on every commit.</p>
+  <p>Version history then validates the architecture retroactively. Define <i>change cohesion</i> as the median, over feature commits, of the number of distinct top-level directories touched:</p>
+  <div class="equation"><i>C</i> = median<sub>commits</sub> |{top-level dirs touched}|<span class="eqno">(4)</span></div>
+  <p>CDD predicts <i>C</i> = 1 (platform commits excepted); sustained drift above 1 is an early warning that the drawn boundaries no longer match how the system actually changes. Together (<i>L</i>, FCF, <i>C</i>) make P6 auditable: fail the build when <i>L</i> &lt; 0.9 or FCF &gt; <i>B</i> — the same fail-fast posture the architecture applies everywhere else.</p>
+
+  <h2 id="s4">4. The Platform Contract</h2>
+  <p>To keep module signatures stable as the system grows, the platform's entire offering is encapsulated in a single struct (Listing 2). Growth is additive — a new field is invisible to modules that ignore it — and the container is passed by pointer so a future field never silently diverges between copies. The one governance rule is P3: the container carries <i>infrastructure</i>, never business services. The moment a domain type appears on it, it has become a god object and the boundary has failed.</p>
+
+  <figure class="listing">
+<pre><code class="language-go">package server
+
+import (
+	"database/sql"
+	"log"
+
+	"github.com/labstack/echo/v4"
+	"go.opentelemetry.io/otel/trace"
+
+	"meu-projeto/internal/platform/database"
+)
+
+// Container is the platform's public contract: everything the
+// platform offers, and the only thing a module may depend on (P3).
+type Container struct {
+	Echo     *echo.Echo
+	DB       *sql.DB
+	Logger   *log.Logger
+	Tracer   trace.Tracer       // uniform telemetry for every module (G8, §10.4)
+	Migrator *database.Migrator // per-module schema, one global ledger (G7, §10.3)
+}</code></pre>
+    <figcaption><b>Listing 2.</b> <code>internal/platform/server/container.go</code>. Infrastructure only; zero business vocabulary. The router is Echo, constructed by the platform with its middleware pre-installed (§10.2); the migrator collects each module's schema at <code>Initialize</code> time (§10.3).</figcaption>
+  </figure>
+
+  <p>The module's entry point (Listing 3) is where P2 and P4 meet: explicit constructors, fail-fast configuration, and error wrapping so that boot logs carry module-qualified causes. Note what the function does <i>not</i> know — how the database was opened, which port the server binds, or that any other module exists.</p>
+
+  <figure class="listing">
+<pre><code class="language-go">package auth
+
+import (
+	"fmt"
+
+	"meu-projeto/internal/platform/server"
+)
+
+// Initialize is the module's single entry point (P2). It wires the
+// vertical slice and fails fast on an inconsistent environment.
+func Initialize(deps *server.Container) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return fmt.Errorf("auth: config: %w", err)
+	}
+
+	repo := NewRepository(deps.DB)
+	service := NewService(repo, cfg.JWTSecret)
+	handler := NewHandler(service, deps.Logger)
+
+	deps.Migrator.Add("auth", migrationFS) // schema travels with the module (§10.3)
+	RegisterRoutes(deps.Echo, handler)
+	return nil
+}</code></pre>
+    <figcaption><b>Listing 3.</b> <code>internal/auth/module.go</code>. The compiler is the dependency injector (P4); <code>%w</code> wrapping gives the composition root attributable failures. The one-line <code>Add</code> makes a forgotten schema impossible without a forgotten module — which fails loudly anyway.</figcaption>
+  </figure>
+
+  <h3 id="s4-1">4.1 Design Alternative: A Generic Registry</h3>
+  <p>A fair challenge to Listing 2: why a static struct, whose fields every module can nominally see, rather than a dynamic map from which each module resolves exactly the dependencies it needs? Generics make the alternative pleasant to express (Listing 4), and it deserves an honest comparison rather than a dismissal.</p>
+
+  <figure class="listing">
+<pre><code class="language-go">// internal/platform/server/registry.go — the alternative under comparison.
+package server
+
+type Registry struct{ providers sync.Map }
+
+func Register[T any](r *Registry, v T) {
+	r.providers.Store(reflect.TypeOf((*T)(nil)), v)
+}
+
+func Resolve[T any](r *Registry) (T, error) {
+	v, ok := r.providers.Load(reflect.TypeOf((*T)(nil)))
+	if !ok {
+		var zero T
+		return zero, fmt.Errorf("registry: no provider registered for %T", zero)
+	}
+	return v.(T), nil
+}
+
+// A module's Initialize then pulls exactly what it declares:
+//   db, err := server.Resolve[*sql.DB](deps)
+//   e, err  := server.Resolve[*echo.Echo](deps)</code></pre>
+    <figcaption><b>Listing 4.</b> A generics-based service locator: type-safe at the call site, invisible to the compiler across it. Resolution failures surface at boot, not at compile time — the decisive trade against P4.</figcaption>
+  </figure>
+
+  <p>The struct buys three properties. <i>Totality is compiler-checked:</i> a module asking for a capability the platform lacks is a compile error today, not a boot error on deploy day (P4). <i>Discovery is greppable:</i> "who uses the database?" is one search over <code>deps.DB</code>, and the platform's entire offering reads as one type in godoc. And the visibility objection is weaker than it first appears: fields are <i>offers</i>, not obligations — a module that never touches <code>deps.Tracer</code> carries zero coupling to it, and the Go compiler will not even force the import. The registry buys the mirror image. <i>Open extension:</i> a third-party or generated module can contribute and consume capabilities without anyone editing a shared file. <i>Minimal knowledge:</i> a module names only the types it resolves. Its costs are the classic service-locator costs: errors move rightward from compile time to boot time, the dependency graph vanishes from static analysis, and the pattern is — structurally — the DI container that P4 exists to keep out.</p>
+  <p>The recommendation follows the trade-off rather than taste. Prefer the struct while the platform surface is small and first-party, which is the regime this paper targets; reach for the registry — or the hybrid of a struct carrying one <code>Registry</code> field for extensions — only when plugin-style third parties or unbounded capability growth turn editing <code>container.go</code> into a governance problem. The break-even is ownership, not field count.</p>
+
+  <h2 id="s5">5. Transport I — The JSON API</h2>
+  <p>The original specification served both audiences from one handler, sniffing the <code>HX-Request</code> header to decide between JSON-era logic and HTML rendering. That conflation is gap <span class="gid">G1</span>: machine clients and browsers have incompatible contracts. Machines need versioned paths, strict content types, semantic status codes, and error bodies that are stable enough to program against; none of that should be entangled with template execution. CDD therefore gives each module <i>two</i> transport files over <i>one</i> service core (Figure 2), and this section specifies the machine-facing half in isolation.</p>
+
+  <figure class="fig">
+    <svg viewBox="0 0 780 340" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Two clients, browser and API client, enter the module through separate transport files that converge on one service and repository backed by Postgres">
+      <defs>
+        <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0L10,5L0,10z" fill="var(--ink)"/>
+        </marker>
+      </defs>
+      <g font-family="ui-monospace,SF Mono,Menlo,Consolas,monospace" font-size="12">
+        <!-- module boundary -->
+        <rect x="250" y="18" width="460" height="292" rx="6" fill="var(--code-bg)" stroke="var(--ink)" stroke-width="1.3"/>
+        <text x="266" y="42" font-weight="700">internal/auth</text>
+        <text x="366" y="42" font-size="10.5" fill="var(--muted)" font-family="Charter,Georgia,serif" font-style="italic">— one bounded context</text>
+        <!-- clients -->
+        <rect x="24" y="68" width="150" height="52" rx="3" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.3"/>
+        <text x="99" y="90" text-anchor="middle" font-weight="700">Browser</text>
+        <text x="99" y="107" text-anchor="middle" font-size="10" fill="var(--muted)">HTMX · progressive</text>
+        <rect x="24" y="208" width="150" height="52" rx="3" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.3"/>
+        <text x="99" y="230" text-anchor="middle" font-weight="700">API client</text>
+        <text x="99" y="247" text-anchor="middle" font-size="10" fill="var(--muted)">mobile · service · script</text>
+        <!-- transports -->
+        <rect x="300" y="66" width="176" height="58" rx="3" fill="var(--paper)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="388" y="84" text-anchor="middle" font-weight="700" fill="var(--accent)">web.go</text>
+        <text x="388" y="99" text-anchor="middle" font-size="9.5">POST /auth/login</text>
+        <text x="388" y="113" text-anchor="middle" font-size="9.5" fill="var(--muted)">form in · HTML fragment out</text>
+        <rect x="300" y="206" width="176" height="58" rx="3" fill="var(--paper)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="388" y="224" text-anchor="middle" font-weight="700" fill="var(--accent)">api.go</text>
+        <text x="388" y="239" text-anchor="middle" font-size="9.5">POST /api/v1/auth/sessions</text>
+        <text x="388" y="253" text-anchor="middle" font-size="9.5" fill="var(--muted)">JSON in · JSON out</text>
+        <!-- client arrows -->
+        <line x1="174" y1="95" x2="298" y2="95" stroke="var(--ink)" stroke-width="1.2" marker-end="url(#ah2)"/>
+        <line x1="174" y1="235" x2="298" y2="235" stroke="var(--ink)" stroke-width="1.2" marker-end="url(#ah2)"/>
+        <!-- service and repository -->
+        <rect x="505" y="140" width="95" height="52" rx="3" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.3"/>
+        <text x="552" y="162" text-anchor="middle" font-weight="700">Service</text>
+        <text x="552" y="178" text-anchor="middle" font-size="9.5" fill="var(--muted)">business rules</text>
+        <rect x="615" y="140" width="90" height="52" rx="3" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.3"/>
+        <text x="660" y="162" text-anchor="middle" font-weight="700" font-size="11">Repository</text>
+        <text x="660" y="178" text-anchor="middle" font-size="9.5" fill="var(--muted)">explicit SQL</text>
+        <line x1="476" y1="100" x2="502" y2="150" stroke="var(--ink)" stroke-width="1.2" marker-end="url(#ah2)"/>
+        <line x1="476" y1="230" x2="502" y2="182" stroke="var(--ink)" stroke-width="1.2" marker-end="url(#ah2)"/>
+        <line x1="600" y1="166" x2="613" y2="166" stroke="var(--ink)" stroke-width="1.2" marker-end="url(#ah2)"/>
+        <!-- database -->
+        <line x1="705" y1="166" x2="719" y2="166" stroke="var(--ink)" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#ah2)"/>
+        <path d="M721,148 a24,7 0 0 0 48,0 v40 a24,7 0 0 1 -48,0 z" fill="var(--code-bg)" stroke="var(--ink)" stroke-width="1.2"/>
+        <ellipse cx="745" cy="148" rx="24" ry="7" fill="var(--code-bg)" stroke="var(--ink)" stroke-width="1.2"/>
+        <text x="745" y="215" text-anchor="middle" font-size="10">Postgres</text>
+        <!-- caption inside boundary -->
+        <text x="480" y="296" text-anchor="middle" font-size="11" font-style="italic" fill="var(--muted)" font-family="Charter,Georgia,serif">one service core, two transports — the split that remediates G1</text>
+      </g>
+    </svg>
+    <figcaption><b>Figure 2.</b> Dual-transport request flow. Both surfaces converge on the same <code>Service</code>; only serialization and status semantics differ.</figcaption>
+  </figure>
+
+  <p>Four rules govern the JSON surface. <b>(i) Namespacing:</b> every machine route lives under <code>/api/v1/&lt;module&gt;/…</code>, keeping versioning explicit and leaving root paths to hypermedia. <b>(ii) Error envelope:</b> failures return a stable <code>{code, message}</code> object; clients branch on <code>code</code>, never on prose. <b>(iii) Defense at the edge:</b> request bodies are bounded by the platform's <code>BodyLimit</code> middleware (§10.2) before any handler runs. <b>(iv) Translation, not logic:</b> the handler maps domain sentinel errors to HTTP status codes and does nothing else — no SQL, no templates, no business branching. Listing 5 registers both surfaces on the Echo router [10]; Listing 6 implements the API handler.</p>
+
+  <figure class="listing">
+<pre><code class="language-go">package auth
+
+import "github.com/labstack/echo/v4"
+
+func RegisterRoutes(e *echo.Echo, h *Handler) {
+	// Transport I — machine-facing JSON surface (§5)
+	api := e.Group("/api/v1/auth")
+	api.POST("/sessions", h.CreateSession)
+
+	// Transport II — human-facing hypermedia surface (§6)
+	e.GET("/auth/login", h.LoginPage)
+	e.POST("/auth/login", h.LoginWeb)
+}</code></pre>
+    <figcaption><b>Listing 5.</b> <code>internal/auth/routes.go</code>. One registration point per module; the two audiences never share a route, and the API group carries its version in the path.</figcaption>
+  </figure>
+
+  <figure class="listing">
+<pre><code class="language-go">package auth
+
+import (
+	"errors"
+	"net/http"
+
+	"github.com/labstack/echo/v4"
+)
+
+type credentialsIn struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type apiError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// CreateSession is the machine-facing surface: strict JSON in,
+// enveloped JSON out, exhaustive status mapping, no HTML anywhere.
+func (h *Handler) CreateSession(c echo.Context) error {
+	var in credentialsIn
+	if err := c.Bind(&amp;in); err != nil {
+		return c.JSON(http.StatusBadRequest,
+			apiError{"malformed_body", "request body must be valid JSON"})
+	}
+
+	token, err := h.service.Authenticate(c.Request().Context(),
+		in.Email, in.Password)
+	switch {
+	case errors.Is(err, ErrInvalidCredentials):
+		return c.JSON(http.StatusUnauthorized,
+			apiError{"invalid_credentials", "e-mail or password is incorrect"})
+	case err != nil:
+		return c.JSON(http.StatusInternalServerError,
+			apiError{"internal", "unexpected failure"})
+	default:
+		return c.JSON(http.StatusCreated, map[string]string{"token": token})
+	}
+}</code></pre>
+    <figcaption><b>Listing 6.</b> <code>internal/auth/api.go</code>. Every branch <i>returns</i> — the type system forbids the fall-through the original handler exhibited (<span class="gid">G3</span>). The body-size guard moved to the platform's <code>BodyLimit</code> middleware (§10.2), and Echo's <code>c.JSON</code> dissolves the hand-written <code>writeJSON</code> helper.</figcaption>
+  </figure>
+
+  <p>Route governance across modules (G9) survives the framework change through one explicit assertion: after the last <code>Initialize</code>, the composition root calls <code>server.MustAssertUniqueRoutes</code> (Listing 13, §10.5), so a cross-module route collision is a boot failure rather than a silently shadowed handler in production.</p>
+
+  <h2 id="s6">6. Transport II — Serving Hypermedia (HTMX)</h2>
+  <p>The human-facing surface returns hypermedia, not data. Templates are embedded with <code>go:embed</code> and parsed once at package initialization (Listing 7): the back end and the front end compile into a single binary, and a malformed template kills the process at start-up — or a trivial CI test — rather than mid-request. This corrects the original design, which parsed inside the constructor and thereby deferred discovery of template defects.</p>
+  <p>The fragment protocol is the heart of the layer. HTMX marks its requests with <code>HX-Request: true</code>; on validation failure the handler responds with <code>422 Unprocessable Entity</code> and re-renders only the <code>_form.html</code> fragment (Listing 8), which HTMX swaps in place. A non-HTMX browser hitting the very same route receives the full page with the error inlined — progressive enhancement with zero JavaScript build step. Success diverges symmetrically: HTMX clients get an <code>HX-Redirect</code> header with <code>204 No Content</code>; classic browsers get <code>303 See Other</code>. Listing 7 makes every branch explicit — the original listing's error path fell through to the success redirect for non-HTMX clients (<span class="gid">G3</span>), a defect invisible in a demo and severe in production.</p>
+
+  <figure class="listing">
+<pre><code class="language-go">package auth
+
+import (
+	"bytes"
+	"embed"
+	"html/template"
+	"net/http"
+
+	"github.com/labstack/echo/v4"
+)
+
+//go:embed templates/*.html
+var templateFS embed.FS
+
+// Parsed once at init: a broken template fails the process at boot,
+// not mid-request. A one-line CI test locks this in (§8).
+var templates = template.Must(template.ParseFS(templateFS, "templates/*.html"))
+
+// render buffers before writing, so a template failure surfaces as
+// Echo's error handler (a clean 500) — never a half-written body.
+func render(c echo.Context, status int, name string, data any) error {
+	var buf bytes.Buffer
+	if err := templates.ExecuteTemplate(&amp;buf, name, data); err != nil {
+		return err
+	}
+	return c.HTMLBlob(status, buf.Bytes())
+}
+
+func (h *Handler) LoginPage(c echo.Context) error {
+	return render(c, http.StatusOK, "login.html", nil)
+}
+
+func (h *Handler) LoginWeb(c echo.Context) error {
+	_, err := h.service.Authenticate(c.Request().Context(),
+		c.FormValue("email"), c.FormValue("password"))
+	isHTMX := c.Request().Header.Get("HX-Request") == "true"
+
+	if err != nil {
+		data := map[string]string{"Error": "invalid e-mail or password"}
+		if isHTMX {
+			return render(c, http.StatusUnprocessableEntity, "_form.html", data)
+		}
+		return render(c, http.StatusUnprocessableEntity, "login.html", data)
+	}
+
+	if isHTMX {
+		c.Response().Header().Set("HX-Redirect", "/dashboard")
+		return c.NoContent(http.StatusNoContent)
+	}
+	return c.Redirect(http.StatusSeeOther, "/dashboard")
+}</code></pre>
+    <figcaption><b>Listing 7.</b> <code>internal/auth/web.go</code> on Echo. Exhaustive branching over (outcome × client), enforced by return-per-branch. One caveat stands: HTMX does not swap non-2xx bodies by default — enable <code>htmx.config.responseHandling</code> (v2) or the <code>response-targets</code> extension, or return <code>200</code> for validation fragments if you accept the weaker semantics.</figcaption>
+  </figure>
+
+  <figure class="listing">
+<pre><code class="language-html">&lt;form id="login-form" hx-post="/auth/login" hx-swap="outerHTML"&gt;
+  {{if .Error}}&lt;p class="error" role="alert"&gt;{{.Error}}&lt;/p&gt;{{end}}
+  &lt;input type="email" name="email" required&gt;
+  &lt;input type="password" name="password" required&gt;
+  &lt;button type="submit"&gt;Sign in&lt;/button&gt;
+&lt;/form&gt;</code></pre>
+    <figcaption><b>Listing 8.</b> <code>templates/_form.html</code>. Behavior lives on the element (LoB [5]): the fragment declares its own submission target and swap strategy. Without JavaScript the same form still posts to the same route.</figcaption>
+  </figure>
+
+  <h2 id="s7">7. Composition Root and Lifecycle</h2>
+  <p>The entrypoint owns exactly three jobs: build the platform, attach the modules, and manage the process lifecycle. The original listing carried three defects worth naming (<span class="gid">G2</span>). First, <code>log.Fatalf</code> inside the serving goroutine calls <code>os.Exit</code>, which skips every <code>defer</code> — including <code>db.Close()</code> — precisely in the crash scenarios where orderly release matters most. Second, the shutdown check compared errors with <code>!=</code>, which breaks silently the day an error is wrapped; <code>errors.Is</code> is the durable form. Third, the server carried no timeouts, leaving it exposed to slow-client exhaustion, and its five-second drain window is aggressive for anything long-lived.</p>
+  <p>Listing 9 applies the canonical fix: <code>main</code> delegates to a <code>run() error</code> function that holds every resource and every <code>defer</code>, giving the process a single exit point through which clean-up always flows. <code>signal.NotifyContext</code> replaces the hand-rolled channel, and explicit timeouts bound both request handling and drain.</p>
+
+  <figure class="listing">
+<pre><code class="language-go">package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"go.opentelemetry.io/otel"
+
+	"meu-projeto/internal/auth"
+	"meu-projeto/internal/platform/database"
+	"meu-projeto/internal/platform/server"
+)
+
+func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run owns the whole lifecycle. Because every resource is released
+// via defer *inside* run, a fatal exit can no longer skip clean-up —
+// the central defect of the original listing (G2).
+func run() error {
+	db, err := database.NewPostgres(os.Getenv("DATABASE_URL"))
+	if err != nil {
+		return fmt.Errorf("postgres: %w", err)
+	}
+	defer db.Close()
+
+	c := &amp;server.Container{
+		Echo:     server.NewEcho(),         // middleware pre-installed (G5, Listing 13)
+		DB:       db,
+		Logger:   log.Default(),
+		Tracer:   otel.Tracer("api"),       // uniform telemetry (G8)
+		Migrator: database.NewMigrator(db), // one ledger for all modules (§10.3)
+	}
+
+	// Attach the modules (plugins). Adding a feature is one line;
+	// removing one is one line plus rm -rf (P5).
+	if err := auth.Initialize(c); err != nil {
+		return fmt.Errorf("module auth: %w", err)
+	}
+
+	server.MustAssertUniqueRoutes(c.Echo) // G9: collisions fail the boot
+	c.Migrator.MustVerify()               // G7: schema current, or refuse to serve
+
+	srv := &amp;http.Server{
+		Addr:              ":8080",
+		Handler:           c.Echo, // Echo is a plain http.Handler
+		ReadHeaderTimeout: 5 * time.Second,  // slowloris guard
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(),
+		os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	errCh := make(chan error, 1)
+	go func() { errCh &lt;- srv.ListenAndServe() }()
+	log.Println("listening on :8080")
+
+	select {
+	case err := &lt;-errCh:
+		return fmt.Errorf("http server: %w", err)
+	case &lt;-ctx.Done(): // SIGINT / SIGTERM received
+	}
+
+	log.Println("draining connections…")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("draining connections: %w", err)
+	}
+	return nil
+}</code></pre>
+    <figcaption><b>Listing 9.</b> <code>cmd/api/main.go</code>, corrected. Single exit point, honored defers, wrapped errors, bounded timeouts, twin boot assertions — routes unique, schema current — and the framework mounted as an ordinary <code>http.Handler</code>, so the lifecycle stays a stdlib property rather than an Echo property. Applying migrations is not <code>run</code>'s job: that belongs to the <code>migrate</code> verb of Listing 14.</figcaption>
+  </figure>
+
+  <h2 id="s8">8. Testability</h2>
+  <p>The vertical slice makes each testing tier structurally cheap — but only once one inconsistency in the original specification is resolved. The prose promised unit tests that mock "the repository interface," while the code constructed a concrete <code>*Repository</code>: a claim the type system could not cash (<span class="gid">G6</span>). The Go idiom resolves it — <i>accept interfaces, return structs</i> — with the interface declared by its consumer and kept minimal (Listing 10). A three-line stub then replaces the database, and service tests run in microseconds with zero infrastructure. The rule generalizes, and deserves stating as sharply as the principles of §3.1: a feature-oriented architecture does not abolish interfaces, it abolishes <i>speculative</i> ones. A seam exists wherever a consumer must substitute a collaborator under test; it is declared in the consumer's file, sized to exactly the consumer's use, and satisfied implicitly by the concrete type. Mockability is thereby a property each slice grants itself, never a ceremony imposed architecture-wide.</p>
+
+  <figure class="listing">
+<pre><code class="language-go">// service.go — the port is declared by its consumer, sized to
+// exactly what the service uses (G6).
+type UserStore interface {
+	ByEmail(ctx context.Context, email string) (User, error)
+}
+
+type Service struct {
+	store  UserStore
+	secret []byte
+}
+
+// service_test.go — the entire test double:
+type stubStore struct {
+	u   User
+	err error
+}
+
+func (s stubStore) ByEmail(context.Context, string) (User, error) {
+	return s.u, s.err
+}</code></pre>
+    <figcaption><b>Listing 10.</b> Consumer-side port. <code>NewRepository</code> still returns a concrete struct; it satisfies <code>UserStore</code> implicitly.</figcaption>
+  </figure>
+
+  <p>For integration, the module's own <code>Initialize</code> doubles as the test harness: inject a throwaway Postgres from Testcontainers and a fresh platform router, and the test exercises real SQL, real wiring, and real routes exactly as deployed (Listing 11). Because the parsed-at-init templates of §6 live in package state, a one-line test — importing the package and asserting nothing — already proves every template parses.</p>
+
+  <figure class="listing">
+<pre><code class="language-go">pg, _ := postgres.Run(ctx, "postgres:16-alpine")
+db, _ := sql.Open("pgx", pg.MustConnectionString(ctx))
+e := server.NewEcho()
+
+// The real module, wired against a real database:
+err := auth.Initialize(&amp;server.Container{Echo: e, DB: db, Logger: log.Default()})</code></pre>
+    <figcaption><b>Listing 11.</b> Integration harness via Testcontainers: the unit under test is the deployable slice itself.</figcaption>
+  </figure>
+
+  <p>End-to-end, the hypermedia choice pays again. The module serves its own HTML, so Playwright drives the genuine routes with no SPA build, no API-mocking layer, and no hydration races; an HTMX swap is an ordinary HTTP round-trip whose result is directly assertable in the DOM. The three tiers compose into a clean pyramid whose every level lives inside — or points directly at — the module folder.</p>
+
+  <h2 id="s9">9. Trade-off Analysis</h2>
+  <p>Table 1 compares CDD against a purist layered baseline along the dimensions this paper treats as decision-relevant. The honest reading is not one-sided. Layered designs retain a genuine advantage wherever cross-cutting invariants dominate — heavily regulated domains with many shared policies have a natural home for them in a layer, whereas CDD must build that seam deliberately (<span class="gid">G5</span>). Duplication of near-identical data structures across modules is real; CDD accepts it as the standard price of bounded contexts [3] and of the copying-over-coupling proverb [8]. And module count itself can sprawl: past roughly twenty slices, grouping folders by subdomain restores navigability without breaking any principle. The framework choice deserves the same candor: Echo trades a measure of P4's stdlib purism for binding, route groups, and native middleware — a trade this design contains by keeping the framework a guest rather than a landlord, mounted behind <code>http.Handler</code> (Listing 9) and visible to modules only through <code>RegisterRoutes</code>, so it stays reversible.</p>
+
+  <table>
+    <caption><b>Table 1.</b> CDD versus a purist layered architecture (Clean/Hexagonal) across decision-relevant dimensions.</caption>
+    <thead>
+      <tr><th>Dimension</th><th>CDD (vertical modules)</th><th>Purist layered</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Files touched per feature change</td><td>One folder</td><td>Four to six layers across directories</td></tr>
+      <tr><td>Agent context footprint (P6)</td><td>Bounded and contiguous (<i>L</i> → 1; §3.3)</td><td>Scattered; high assembly and truncation cost</td></tr>
+      <tr><td>Cyclic-import risk</td><td>None by construction (module → platform only)</td><td>Mitigated by discipline and review</td></tr>
+      <tr><td>Cross-context reuse</td><td>Duplication, accepted deliberately [3, 8]</td><td>Shared abstractions, coupling accepted</td></tr>
+      <tr><td>Cross-cutting policy</td><td>Requires an explicit seam (G5)</td><td>Natural home in a layer — its strongest case</td></tr>
+      <tr><td>Feature removal</td><td><code>rm -rf</code> + one line for code; teardown migration for data (P5, §10.3)</td><td>Multi-layer surgery</td></tr>
+      <tr><td>Onboarding a new dev or agent</td><td>Read one folder</td><td>Learn the whole layer map first</td></tr>
+      <tr><td>Path to microservices</td><td>Module boundary = deployment seam; promotion is a new <code>cmd/</code> (Listing 15)</td><td>Requires re-slicing by feature first</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="s10">10. Gap Analysis and Resolutions</h2>
+  <p>Auditing the original specification against the principles of §3.1 yielded nine gaps. This revision closes all nine. Four are resolved where the corrected listings live — the transport conflation in §5–§6 (G1), the lifecycle defects in §7 (G2), the error fall-through in §6 (G3), and the untestable concrete coupling in §8 (G6). The remaining five are specified in the subsections below: inter-module communication (§10.1), the cross-cutting seam (§10.2), schema ownership (§10.3), observability (§10.4), and route governance (§10.5). Table 2 is the ledger.</p>
+
+  <table>
+    <caption><b>Table 2.</b> Gap ledger for the original CDD specification. Every gap is resolved in this revision; "Where" points to the section carrying the fix.</caption>
+    <thead>
+      <tr><th>ID</th><th>Gap</th><th>Severity</th><th>Resolution</th><th class="mono">Where</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="gid">G1</td><td>API and hypermedia conflated in a single handler via header sniffing</td><td class="sev-h">High</td><td>Two transport files (<code>api.go</code>, <code>web.go</code>) over one service core; disjoint route namespaces</td><td class="mono">§5–§6</td></tr>
+      <tr><td class="gid">G2</td><td>Lifecycle defects: <code>Fatalf</code> in a goroutine skips defers; fragile error equality; no server timeouts</td><td class="sev-h">High</td><td><code>run() error</code> pattern, <code>errors.Is</code>-safe wrapping, explicit timeouts, 10&nbsp;s drain</td><td class="mono">§7</td></tr>
+      <tr><td class="gid">G3</td><td>Error fall-through: a failed non-HTMX login continued into the success redirect</td><td class="sev-h">High</td><td>Exhaustive branching over (outcome × client); <code>422</code> with fragment or full-page re-render</td><td class="mono">§6</td></tr>
+      <tr><td class="gid">G4</td><td>Inter-module communication undefined — the day <code>billing</code> needs <code>auth</code>, ad-hoc coupling wins</td><td class="sev-m">Medium</td><td>Minimal exported facade per module + import-fence linting; optional in-process events</td><td class="mono">§10.1</td></tr>
+      <tr><td class="gid">G5</td><td>No seam for cross-cutting middleware (recovery, request ID, logging, tracing)</td><td class="sev-m">Medium</td><td>Native Echo chain installed once by <code>server.NewEcho</code>: Recover, RequestID, BodyLimit, Logger, OTel</td><td class="mono">§10.2</td></tr>
+      <tr><td class="gid">G6</td><td>Service bound to a concrete repository; the mocking claim was unsupported by the types</td><td class="sev-m">Medium</td><td>Consumer-side minimal interface; implementations satisfy it implicitly</td><td class="mono">§8</td></tr>
+      <tr><td class="gid">G7</td><td>Schema migrations unowned — locality stopped at the SQL, not the DDL</td><td class="sev-m">Medium</td><td>Pure-SQL migrations registered in <code>Initialize</code>, one global ledger; applied at deploy, verified at boot</td><td class="mono">§10.3</td></tr>
+      <tr><td class="gid">G8</td><td>No observability contract; modules cannot emit traces or metrics uniformly</td><td class="sev-m">Medium</td><td><code>Tracer</code> on the Container (Listing 2); span-per-request via the §10.2 chain</td><td class="mono">§10.4</td></tr>
+      <tr><td class="gid">G9</td><td>Route-namespace collisions between modules ungoverned</td><td class="sev-l">Low</td><td>Namespacing convention + <code>MustAssertUniqueRoutes</code> boot assertion (Listing 13)</td><td class="mono">§10.5</td></tr>
+    </tbody>
+  </table>
+
+  <h3>10.1 G4 — The Facade Protocol</h3>
+  <p>Sibling isolation is CDD's structural guarantee, but real systems eventually need <code>billing</code> to verify a token that <code>auth</code> issued. The remediation is a deliberately narrow, exported facade: one small file whose interface is the <i>only</i> symbol siblings may touch (Listing 12). The fence is then made mechanical rather than cultural with an import linter (<code>depguard</code> or <code>gomodguard</code>): <code>internal/&lt;m&gt;/**</code> may import <code>internal/platform/**</code> and sibling facades, nothing deeper. Where even a facade couples too tightly — notification-style, fire-and-forget integration — a small in-process event bus carried on the Container removes the temporal coupling as well.</p>
+
+  <figure class="listing">
+<pre><code class="language-go">// internal/auth/facade.go — the ONLY symbol siblings may import.
+package auth
+
+// TokenVerifier is auth's public contract to the rest of the system.
+// It is small on purpose: every method added here is coupling granted.
+type TokenVerifier interface {
+	Verify(ctx context.Context, raw string) (UserID, error)
+}
+
+// NewVerifier is constructed by the composition root and handed to
+// the modules that need it — never fetched by a sibling directly.
+func NewVerifier(deps *server.Container) TokenVerifier { /* … */ }</code></pre>
+    <figcaption><b>Listing 12.</b> A facade converts "modules never talk" into "modules talk through one audited doorway," preserving delete-ability: removing <code>auth</code> breaks compilation exactly at every consented coupling point.</figcaption>
+  </figure>
+
+  <h3>10.2 G5 — The Cross-Cutting Seam</h3>
+  <p>Echo dissolves what the stdlib design had to hand-build: middleware is native, and the seam lives exactly where P3 demands — in the platform, installed once, invisible to modules (Listing 13). The chain is ordered deliberately. Recovery sits outermost, so a panicking handler becomes a logged 500 instead of a dead process; the request ID precedes logging, so every line is correlated; the 1&nbsp;MB body limit runs ahead of any decoder, generalizing §5's edge guard from one handler to the entire surface; and OpenTelemetry wraps innermost, so spans measure real work. Modules stay policy-free, with one carve-out unchanged from the earlier design: authorization on a module's own routes stays <i>inside</i> the module, because the module owns that vocabulary — and Echo's group-level middleware makes that local attachment a one-liner in <code>routes.go</code>.</p>
+
+  <figure class="listing">
+<pre><code class="language-go">// internal/platform/server/echo.go — the cross-cutting seam (G5)
+// and the route governor (G9), owned entirely by the platform.
+package server
+
+func NewEcho() *echo.Echo {
+	e := echo.New()
+	e.HideBanner = true
+
+	e.Use(
+		middleware.Recover(),       // panics → 500, the process survives
+		middleware.RequestID(),     // correlation before logging
+		middleware.BodyLimit("1M"), // §5's edge guard, now surface-wide
+		middleware.Logger(),
+		otelecho.Middleware("api"), // span per request (G8, §10.4)
+	)
+	return e
+}
+
+// MustAssertUniqueRoutes runs after the last Initialize (see Listing 9):
+// two modules claiming one route is a boot failure, never a runtime one.
+func MustAssertUniqueRoutes(e *echo.Echo) {
+	seen := map[string]string{}
+	for _, r := range e.Routes() {
+		key := r.Method + " " + r.Path
+		if prev, dup := seen[key]; dup {
+			panic(fmt.Sprintf("route %s registered by %s and %s",
+				key, prev, r.Name))
+		}
+		seen[key] = r.Name
+	}
+}</code></pre>
+    <figcaption><b>Listing 13.</b> <code>internal/platform/server/echo.go</code>. The platform hands every module a router that already carries policy; no module can forget recovery, correlation, limits, or tracing, because no module is asked to remember them.</figcaption>
+  </figure>
+
+  <h3>10.3 G7 — Schema Ownership and Migrations</h3>
+  <p>Locality that covers queries but not DDL is locality half-kept — but the naive fix, a migrations folder per module wired together by hand, has three failure modes of its own. A hand-maintained aggregation map is a second registry that can silently omit a module, deferring the failure from boot to the first query. "Disjoint schemas, so order is immaterial" holds only until someone declares a cross-module foreign key. And a ledger fragmented per module leaves operations without a single answer to the only question that matters at 3&nbsp;a.m.: <i>what version is production on?</i> The resolution splits authorship from operation: folders stay per module, because ownership is a code-locality concern; the ledger is global and singular, because schema state is an operational one.</p>
+  <p>Four rules make the split safe. <b>Pure SQL.</b> The migration artifact is a <code>.sql</code> file a DBA can read in a pull request; an established engine — goose, golang-migrate, or Atlas in versioned mode — owns history, checksums, and dirty-state detection; Go's role is embed-and-invoke, nothing more. Go-code migrations and ORM auto-migration are banned: an unversioned, reflection-driven schema sync is not a migration, it is a hope. <b>One registry.</b> The module registers its embedded SQL inside <code>Initialize</code> (Listing 3), so forgetting a schema would require forgetting the module — which fails loudly anyway. <b>One ledger.</b> Filenames are timestamped and module-prefixed (<code>20260714120000_auth_create_users.sql</code>); the platform migrator merges every registered filesystem, sorts the stream chronologically, and applies it under a Postgres advisory lock, so N replicas booting together cannot race the DDL, and history lives in exactly one table. <b>No cross-module constraints.</b> Modules share identifiers, never foreign keys — the same doctrine as the facade (§10.1), and forced regardless by the extraction path of §11: a module promoted to its own database could not have kept the constraint. A genuine need for a cross-context FK is evidence that one context has been drawn as two.</p>
+
+  <figure class="listing">
+<pre><code class="language-go">// internal/auth/migrations.go — pure SQL, packaged with the module.
+// e.g. migrations/20260714120000_auth_create_users.sql
+//go:embed migrations/*.sql
+var migrationFS embed.FS
+
+// internal/platform/database/migrate.go — one ledger for every module.
+type Migrator struct {
+	db      *sql.DB
+	sources map[string]fs.FS
+}
+
+func NewMigrator(db *sql.DB) *Migrator {
+	return &amp;Migrator{db: db, sources: map[string]fs.FS{}}
+}
+
+func (m *Migrator) Add(module string, src fs.FS) { m.sources[module] = src }
+
+// Apply merges every source, sorts by leading timestamp, and hands the
+// single stream to goose under an advisory lock: one history table,
+// one total order. Invoked by the migrate verb, never by serve.
+func (m *Migrator) Apply(ctx context.Context) error { /* goose.Up… */ }
+
+// MustVerify is the boot half: serve, under DML-only credentials,
+// refuses to start behind the binary's newest embedded version.
+func (m *Migrator) MustVerify() { /* compare ledger vs embedded… */ }
+
+// cmd/api/main.go — one binary, two verbs:
+//   app migrate → Apply()   (deploy step, DDL-capable role)
+//   app serve   → run()     (Listing 9; calls MustVerify first)</code></pre>
+    <figcaption><b>Listing 14.</b> Folders per module, ledger global and singular. The artifact is SQL reviewed in pull requests; the engine owns versioning and history; Go merely embeds and invokes — the pattern, not the tool, is the point.</figcaption>
+  </figure>
+
+  <p><i>When</i> to apply is a separate decision from <i>how</i>, and the answer is: at deploy, not at boot. Applying DDL from the serving process requires the runtime credentials to hold DDL rights forever — so any injection or RCE in the request path inherits <code>DROP TABLE</code> — and couples rollout to schema work, so a slow <code>CREATE INDEX</code> stalls the fleet's readiness probes. The embedded SQL makes the production shape nearly free (Listing 14): the same binary grows a <code>migrate</code> verb, run once per deploy as a pipeline job under a privileged role, while the <code>serve</code> verb boots under DML-only credentials and merely <i>verifies</i>, refusing to start behind the binary's newest known version (Listing 9). Auto-apply survives as a development-mode platform flag, where its convenience is real and its risks are not. For the single-pane view, CI dumps <code>pg_dump --schema-only</code> from a freshly migrated scratch database as a build artifact: the complete schema becomes one reviewable file, and drift is visible in pull requests.</p>
+  <p>One honest amendment to P5 follows. <code>rm -rf</code> deletes code in O(1); data never deletes in O(1). A module's final migration is therefore its teardown, shipped and applied <i>before</i> the folder is removed — otherwise strict engines error on history entries whose files have vanished, and orphaned tables outlive their owner. Delete-ability holds fully for code and by protocol for data, and §3.1 now says so.</p>
+
+  <h3>10.4 G8 — Observability as a Platform Capability</h3>
+  <p>Telemetry follows the same one-directional flow as every other capability. The container carries a <code>trace.Tracer</code> (Listing 2); the platform's middleware opens a span per request (Listing 13); and a module wanting finer grain wraps its service or repository calls in child spans via <code>deps.Tracer</code> — three lines, no global state, no sibling imports. Metrics are symmetric: a <code>Meter</code> field joins the container the day the first module needs one, and P3's additive-growth property guarantees no existing module notices.</p>
+
+  <h3>10.5 G9 — Route Governance</h3>
+  <p>Two mechanisms compose. The convention — <code>/&lt;module&gt;/…</code> for hypermedia, <code>/api/v1/&lt;module&gt;/…</code> for machines — makes collisions unlikely by construction. The assertion makes them unshippable: <code>server.MustAssertUniqueRoutes</code> (Listing 13) walks <code>e.Routes()</code> after the last <code>Initialize</code> and panics on any duplicate method–path pair, restoring the boot-time fail-fast that the stdlib mux provided through its registration panic and that Echo's more permissive router does not guarantee. A collision between modules is therefore a deploy that never starts, not a handler silently shadowed in production.</p>
+
+  <h2 id="s11">11. Conclusion and Future Work</h2>
+  <p>Context-Driven Design reframes an old ergonomic argument — vertical slices over horizontal layers — around a constraint that is newly measurable: the finite context of the reader, whether human or machine. Its six principles cost little to state and much to violate, and the reference implementation shows the whole method fitting comfortably inside idiomatic Go: an explicit container, plugin modules, two cleanly separated transports over one service core, and a lifecycle that survives its own crashes. The audit is part of the argument rather than an appendix — a design that advertises legibility should welcome having its own listings read closely, and three of the nine findings were bugs that close reading caught. In this revision the ledger closes at nine for nine.</p>
+  <p>A terminological caution belongs in the conclusion, because it changes how the whole method should be read: this paper has used "modular monolith" for the default deployment shape, and the word <i>monolith</i> deserves its qualifier. Nothing in CDD binds a module to a single process. Because the platform contract is the module's only coupling, the same slice compiles unchanged into whichever binary attaches it (Listing 15): every module in one <code>cmd/api</code> (a monolith), one module per binary (a microservice fleet), or domain-grouped clusters in between. Topology is configuration held in the composition root; when modules split across binaries, cross-module calls simply flow through an RPC implementation of the G4 facade instead of the in-process one. The monolith is merely the cheapest place to start — the architecture is deployment-agnostic.</p>
+
+  <figure class="listing">
+<pre><code class="language-go">// cmd/api/main.go — monolith: every module in one binary.
+auth.Initialize(c)
+billing.Initialize(c)
+reports.Initialize(c)
+
+// cmd/auth/main.go — microservice: the same module, alone,
+// behind its own port. Nothing inside internal/auth changes.
+auth.Initialize(c)</code></pre>
+    <figcaption><b>Listing 15.</b> Topology as configuration. The module folder is byte-identical in both binaries; only the composition root differs. Promoting a slice to a service is a new <code>cmd/</code> directory, not a rewrite.</figcaption>
+  </figure>
+
+  <p>Two lines of future work follow directly. Empirically, §3.3 turns the context-budget claim into an experiment: hold tasks constant, vary architecture, and regress agent task-success against FCF and <i>L</i> on matched CDD and layered codebases — the metric supplies the independent variable that was previously missing. Operationally, the extraction protocol deserves specification: a checklist by which a module that outgrows the monolith — facade to RPC, migrations to its own database, events to a broker — leaves through the seams this architecture already drew.</p>
+
+  <h2 id="refs" style="border-top:none;padding-top:0;margin-top:2.6rem;font-size:1.05rem;font-variant-caps:all-small-caps;letter-spacing:.18em">References</h2>
+  <ol class="references">
+    <li>R. C. Martin. <i>Clean Architecture: A Craftsman's Guide to Software Structure and Design</i>. Prentice Hall, 2017.</li>
+    <li>A. Cockburn. "Hexagonal Architecture (Ports and Adapters)." alistair.cockburn.us, 2005.</li>
+    <li>E. Evans. <i>Domain-Driven Design: Tackling Complexity in the Heart of Software</i>. Addison-Wesley, 2003.</li>
+    <li>J. Bogard. "Vertical Slice Architecture." jimmybogard.com, 2018.</li>
+    <li>C. Gross. "Locality of Behaviour (LoB)." htmx.org essays, 2020.</li>
+    <li>C. Gross, A. Stepinski, D. Akşimşek. <i>Hypermedia Systems</i>. 2023.</li>
+    <li>Uber Technologies. <i>Uber Go Style Guide</i>. github.com/uber-go/guide.</li>
+    <li>R. Pike. "Go Proverbs." Gopherfest, 2015.</li>
+    <li>K. Grzybek. "Modular Monolith: A Primer." kamilgrzybek.com, 2019.</li>
+    <li>LabStack. <i>Echo — High Performance, Extensible, Minimalist Go Web Framework</i>. echo.labstack.com.</li>
+    <li>G. Hohpe, B. Woolf. <i>Enterprise Integration Patterns: Designing, Building, and Deploying Messaging Solutions</i>. Addison-Wesley, 2003.</li>
+    <li>N. F. Liu, K. Lin, J. Hewitt, A. Paranjape, M. Bevilacqua, F. Petroni, P. Liang. "Lost in the Middle: How Language Models Use Long Contexts." <i>TACL</i>, 2024.</li>
+  </ol>
+
+  <footer class="colophon">
+    <span>engineering preprint · revision 5</span>
+    <span>i. b. de carvalho · context-driven design · july 2026</span>
+  </footer>
+</article>

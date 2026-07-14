@@ -1,67 +1,69 @@
 <article class="sheet">
-  <div class="stamp">igor carvalho · vol. 1 · leia-me</div>
+  <div class="stamp">igor carvalho · vol. 1 · about</div>
 
-  <div class="running-head"><span>Igor Carvalho</span><span>Boas-vindas</span></div>
+  <div class="running-head"><span>Igor Carvalho</span><span>About the Author</span></div>
 
   <header class="titleblock">
-    <h1>Bem-vindo às minhas notas de engenharia</h1>
-    <p class="subtitle">Um site estático sem build, sem framework e sem desculpa para ser lento</p>
-    <p class="meta"><b>Formato</b> · HTML + CSS + JS puro · Hospedagem: GitHub Pages</p>
+    <h1>About the Author</h1>
+    <p class="subtitle">Staff Software Engineer building high-scale, low-latency financial systems</p>
+    <p class="meta"><b>Location</b> · Rio de Janeiro, Brazil &nbsp;·&nbsp; <b>Contact</b> · <a href="mailto:dev.igorcarvalho@gmail.com">dev.igorcarvalho@gmail.com</a> &nbsp;·&nbsp; <a href="https://www.linkedin.com/in/igor-carvalho-se/?locale=en-US" target="_blank" rel="noopener">LinkedIn</a></p>
   </header>
 
   <section class="abstract">
-    <h2>Resumo</h2>
-    <p>Este site é um experimento de engenharia deliberadamente simples: cada artigo é um arquivo HTML isolado, buscado sob demanda e injetado numa única página-casca. Não há bundler, não há <code>node_modules</code>, não há etapa de build — só arquivos estáticos que o navegador entende de cara. O resultado é um "livro" onde cada aba da barra lateral é um capítulo, carregado em milissegundos e navegável por URL.</p>
+    <h2>Summary</h2>
+    <p>I'm a Staff Software Engineer with over 8 years of experience building mission-critical financial systems that require 99.99% availability. At Visa, I lead the architecture of core APIs processing 600,000 requests per second at sub-100ms latency, and drive AI strategy and SDLC standards to accelerate engineering velocity and platform resilience across global teams.</p>
+    <p>I specialize in the high-concurrency backbone that modern AI-driven platforms require, working primarily in Golang, AWS, and event-driven architectures. The focus goes beyond writing code — it's about building resilient, cloud-native ecosystems that balance extreme scale with cost efficiency, most recently evidenced by a 15% reduction in operational costs through strategic infrastructure migrations.</p>
   </section>
 
-  <h2 id="s1">1. Por que esse formato existe</h2>
-  <p>A maioria dos geradores de blog estático resolve um problema que este site não tem: milhares de páginas, taxonomias, RSS, busca full-text. Aqui o objetivo é outro — um punhado de artigos técnicos, publicados com <code>git push</code> e nada mais. Um framework de build para isso seria como levar um caminhão para comprar pão.</p>
-  <p>A arquitetura, então, é a mais direta possível: <code>index.html</code> é a casca (sidebar + área de conteúdo); cada artigo vive em <code>/articles/*.html</code> como um fragmento solto, sem <code>&lt;html&gt;</code> nem <code>&lt;head&gt;</code> próprios; e um roteador em Vanilla JS busca o fragmento certo e o injeta na casca, sincronizando o hash da URL para que o botão voltar do navegador e o F5 continuem funcionando. A própria sidebar é montada em runtime a partir de <code>articles/manifest.json</code> — adicionar um capítulo novo é criar o arquivo e somar uma linha nesse manifesto.</p>
-
-  <h2 id="s2">2. Como a navegação funciona</h2>
-  <p>O trecho abaixo é, literalmente, o coração do roteador deste site — a mesma função que acabou de trazer este parágrafo até a sua tela:</p>
-
-  <figure class="listing">
-<pre><code>function carregarArtigo(nomeArtigo) {
-  fetch("./articles/" + nomeArtigo + ".html")
-    .then(function (resposta) {
-      if (!resposta.ok) throw new Error("404");
-      return resposta.text();
-    })
-    .then(function (html) {
-      conteudo.innerHTML = html;
-    })
-    .catch(function () {
-      mostrarErro(nomeArtigo);
-    });
-}</code></pre>
-    <figcaption><b>Listagem 1.</b> <code>assets/app.js</code>. Um <code>fetch</code>, um <code>innerHTML</code>, um <code>catch</code> — o suficiente para o site inteiro.</figcaption>
-  </figure>
-
-  <p>O fluxo completo, do clique no menu até o artigo aparecer na tela, é este:</p>
-
-  <figure class="fig">
-    <div class="fluxo">
-      <div class="fluxo__caixa">clique na sidebar</div>
-      <div class="fluxo__seta">→</div>
-      <div class="fluxo__caixa">location.hash = "artigo"</div>
-      <div class="fluxo__seta">→</div>
-      <div class="fluxo__caixa">fetch('./articles/artigo.html')</div>
-      <div class="fluxo__seta">→</div>
-      <div class="fluxo__caixa">innerHTML em #conteudo</div>
-    </div>
-    <figcaption>Figura 1. O ciclo completo de navegação — quatro passos, nenhum deles precisa de um servidor além de arquivos estáticos.</figcaption>
-  </figure>
-
-  <h2 id="s3">3. O que esperar dos próximos capítulos</h2>
+  <h2 id="s1">1. Current role — Visa</h2>
+  <p><b>Staff Software Engineer</b> · September 2024 – Present · Brazil</p>
   <ul class="plain">
-    <li>Artigos técnicos formatados como este — títulos numerados, tabelas, blocos de código.</li>
-    <li>Zero rastreamento, zero dependência externa: tudo que o site precisa já está nele.</li>
-    <li>Tema claro e escuro, alternável a qualquer momento pelo botão na barra lateral.</li>
+    <li><b>Scale &amp; performance:</b> architecting and maintaining mission-critical distributed systems in Golang, sustaining 99.99% availability while processing up to 600,000 requests per second at sub-100ms latency.</li>
+    <li><b>AI strategy &amp; SDLC governance:</b> defining and rolling out AI-driven engineering standards and SDLC automation to accelerate team velocity and keep architecture consistent across global platforms.</li>
+    <li><b>System resilience:</b> designing event-driven architectures with the SAGA pattern for eventual consistency, reliably processing more than 1.25 million events per day.</li>
+    <li><b>Cloud optimization:</b> steering cost-conscious, cloud-native AWS strategies that cut infrastructure waste by 15% through advanced system fine-tuning.</li>
+    <li><b>Quality engineering:</b> standardizing reliability practices — automated E2E, integration, and load testing — cutting production incidents by 60%.</li>
+    <li><b>Mentorship:</b> mentoring senior engineers and tech leads, and improving onboarding efficiency by 30% through governed documentation standards.</li>
   </ul>
 
+  <h2 id="s2">2. Career path</h2>
+  <p>A summary of prior roles, all centered on distributed systems, banking-grade reliability, and cloud infrastructure:</p>
+
+  <table>
+    <caption><b>Table 1.</b> Professional experience, most recent first.</caption>
+    <thead>
+      <tr><th>Company</th><th>Role</th><th>Period</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Visa</td><td>Staff Software Engineer</td><td class="mono">2024 – Present</td></tr>
+      <tr><td>Pismo</td><td>Senior Software Engineer</td><td class="mono">2022 – 2025</td></tr>
+      <tr><td>Data Grupo</td><td>Senior Software Engineer</td><td class="mono">2018 – 2023</td></tr>
+      <tr><td>Freelance</td><td>PHP Web Developer</td><td class="mono">2016 – 2018</td></tr>
+    </tbody>
+  </table>
+
+  <p>At <b>Pismo</b>, a Banking-as-a-Service fintech, I built and maintained Golang microservices at 99.99% availability, designed event-driven/SAGA architectures processing 1.25 million events/day, and drove the same cost, observability, and testing improvements later carried forward into Visa's platform.</p>
+  <p>At <b>Data Grupo</b>, I worked across full-stack and mobile development (Java, Flutter, AWS, plus professional experience with .NET, Laravel, React, and Angular), leading and building projects spanning automotive logistics outsourcing, government rural-assistance programs in Mato Grosso, financial systems for Caixa Econômica, and social-inclusion startups — work that combined technical delivery with measurable impact on cost, revenue, and access.</p>
+
+  <h2 id="s3">3. Technical focus</h2>
+  <ul class="plain">
+    <li><b>Backend &amp; scale:</b> Golang, Java, distributed systems (SAGAs), high-throughput APIs, microservices.</li>
+    <li><b>AI &amp; standards:</b> AI strategy, SDLC automation, LLM Ops infrastructure, engineering governance.</li>
+    <li><b>Cloud &amp; infra:</b> AWS Solutions Architect (Associate), Kubernetes, observability, CI/CD.</li>
+  </ul>
+
+  <h2 id="s4">4. Education &amp; certifications</h2>
+  <ul class="plain">
+    <li><b>Estácio</b> — Systems Analysis and Development, Information Technology / Information Systems (2018 – 2020).</li>
+    <li><b>AWS Certified Solutions Architect – Associate.</b></li>
+    <li>Alura certifications in Java, Angular, PHP, Flutter, SQL, Git, Spring, Hibernate, TDD, Spring Boot, JPA, and Maven.</li>
+  </ul>
+
+  <h2 id="s5">5. Get in touch</h2>
+  <p>If scaling complex systems and AI-driven engineering practices is something you're working on too, let's connect — <a href="mailto:dev.igorcarvalho@gmail.com">dev.igorcarvalho@gmail.com</a> or on <a href="https://www.linkedin.com/in/igor-carvalho-se/?locale=en-US" target="_blank" rel="noopener">LinkedIn</a>.</p>
+
   <footer class="colophon">
-    <span>igor carvalho · leia-me</span>
-    <span>publicado como HTML estático · sem build</span>
+    <span>igor carvalho · about</span>
+    <span>published as static HTML · no build</span>
   </footer>
 </article>
