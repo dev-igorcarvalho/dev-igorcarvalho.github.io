@@ -11,11 +11,11 @@
 
 /* ---- Tema claro: "Onsen Day" ---- */
 :root[data-theme="light"]{
-  --desk:#f0e0c4;
-  --paper:#fdf4e2;
+  --desk:#ecd7b6;
+  --paper:#f7e9d2;
   --ink:#332012;
   --muted:#8a6a4c;
-  --rule:#e6cd9f;
+  --rule:#e3c99c;
   --accent:#b1501f;
   --danger:#a3341f;
   --warn:#a06a12;
