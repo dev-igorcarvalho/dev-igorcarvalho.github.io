@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Livro de Abas — Engenharia de Software</title>
+<meta name="description" content="Site estático em formato 'livro de abas': artigos técnicos carregados sob demanda, zero build, GitHub Pages.">
+
+<script>
+  // Anti-flash: aplica o tema antes do primeiro paint, sem esperar app.js.
+  (function () {
+    var salvo = localStorage.getItem("tema");
+    var tema = salvo || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", tema);
+  })();
+</script>
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <p class="sidebar__brand">LIVRO DE ABAS</p>
+      <p class="sidebar__tagline">notas de engenharia, uma aba por vez</p>
+      <nav>
+        <a href="#boas-vindas" data-artigo="boas-vindas">Boas-vindas</a>
+        <a href="#exemplo-arquitetura" data-artigo="exemplo-arquitetura">Exemplo: Arquitetura</a>
+      </nav>
+      <div class="sidebar__footer">
+        <button id="toggle-tema" class="theme-toggle" type="button">☾ tema escuro</button>
+      </div>
+    </aside>
+    <main id="conteudo">
+      <!-- conteúdo do artigo é injetado aqui via fetch (assets/app.js) -->
+    </main>
+  </div>
+  <script src="./assets/app.js"></script>
+</body>
+</html>

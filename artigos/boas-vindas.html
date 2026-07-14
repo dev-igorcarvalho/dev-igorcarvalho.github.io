@@ -1,0 +1,67 @@
+<article class="sheet">
+  <div class="stamp">livro de abas · vol. 1 · leia-me</div>
+
+  <div class="running-head"><span>Livro de Abas</span><span>Boas-vindas</span></div>
+
+  <header class="titleblock">
+    <h1>Bem-vindo ao Livro de Abas</h1>
+    <p class="subtitle">Um site estático sem build, sem framework e sem desculpa para ser lento</p>
+    <p class="meta"><b>Formato</b> · HTML + CSS + JS puro · Hospedagem: GitHub Pages</p>
+  </header>
+
+  <section class="abstract">
+    <h2>Resumo</h2>
+    <p>Este site é um experimento de engenharia deliberadamente simples: cada artigo é um arquivo HTML isolado, buscado sob demanda e injetado numa única página-casca. Não há bundler, não há <code>node_modules</code>, não há etapa de build — só arquivos estáticos que o navegador entende de cara. O resultado é um "livro" onde cada aba da barra lateral é um capítulo, carregado em milissegundos e navegável por URL.</p>
+  </section>
+
+  <h2 id="s1">1. Por que esse formato existe</h2>
+  <p>A maioria dos geradores de blog estático resolve um problema que este site não tem: milhares de páginas, taxonomias, RSS, busca full-text. Aqui o objetivo é outro — um punhado de artigos técnicos, publicados com <code>git push</code> e nada mais. Um framework de build para isso seria como levar um caminhão para comprar pão.</p>
+  <p>A arquitetura, então, é a mais direta possível: <code>index.html</code> é a casca (sidebar + área de conteúdo); cada artigo vive em <code>/artigos/*.html</code> como um fragmento solto, sem <code>&lt;html&gt;</code> nem <code>&lt;head&gt;</code> próprios; e um roteador em Vanilla JS busca o fragmento certo e o injeta na casca, sincronizando o hash da URL para que o botão voltar do navegador e o F5 continuem funcionando.</p>
+
+  <h2 id="s2">2. Como a navegação funciona</h2>
+  <p>O trecho abaixo é, literalmente, o coração do roteador deste site — a mesma função que acabou de trazer este parágrafo até a sua tela:</p>
+
+  <figure class="listing">
+<pre><code>function carregarArtigo(nomeArtigo) {
+  fetch("./artigos/" + nomeArtigo + ".html")
+    .then(function (resposta) {
+      if (!resposta.ok) throw new Error("404");
+      return resposta.text();
+    })
+    .then(function (html) {
+      conteudo.innerHTML = html;
+    })
+    .catch(function () {
+      mostrarErro(nomeArtigo);
+    });
+}</code></pre>
+    <figcaption><b>Listagem 1.</b> <code>assets/app.js</code>. Um <code>fetch</code>, um <code>innerHTML</code>, um <code>catch</code> — o suficiente para o site inteiro.</figcaption>
+  </figure>
+
+  <p>O fluxo completo, do clique no menu até o artigo aparecer na tela, é este:</p>
+
+  <figure class="fig">
+    <div class="fluxo">
+      <div class="fluxo__caixa">clique na sidebar</div>
+      <div class="fluxo__seta">→</div>
+      <div class="fluxo__caixa">location.hash = "artigo"</div>
+      <div class="fluxo__seta">→</div>
+      <div class="fluxo__caixa">fetch('./artigos/artigo.html')</div>
+      <div class="fluxo__seta">→</div>
+      <div class="fluxo__caixa">innerHTML em #conteudo</div>
+    </div>
+    <figcaption>Figura 1. O ciclo completo de navegação — quatro passos, nenhum deles precisa de um servidor além de arquivos estáticos.</figcaption>
+  </figure>
+
+  <h2 id="s3">3. O que esperar dos próximos capítulos</h2>
+  <ul class="plain">
+    <li>Artigos técnicos formatados como este — títulos numerados, tabelas, blocos de código.</li>
+    <li>Zero rastreamento, zero dependência externa: tudo que o site precisa já está nele.</li>
+    <li>Tema claro e escuro, alternável a qualquer momento pelo botão na barra lateral.</li>
+  </ul>
+
+  <footer class="colophon">
+    <span>livro de abas · leia-me</span>
+    <span>publicado como HTML estático · sem build</span>
+  </footer>
+</article>
