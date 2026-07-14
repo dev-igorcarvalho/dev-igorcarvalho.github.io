@@ -111,7 +111,7 @@ img,svg{max-width:100%}
 }
 .theme-toggle:hover{border-color:var(--accent); color:var(--accent)}
 
-main#conteudo{
+main#content{
   flex:1; min-width:0; padding:clamp(.75rem,4vw,3.25rem) clamp(.5rem,3vw,2rem);
 }
 
