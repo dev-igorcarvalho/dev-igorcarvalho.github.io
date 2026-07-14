@@ -7,11 +7,11 @@
 <meta name="description" content="Notas de engenharia sobre software e IA — artigos técnicos carregados sob demanda, zero build, GitHub Pages.">
 
 <script>
-  // Anti-flash: aplica o tema antes do primeiro paint, sem esperar app.js.
+  // Anti-flash: applies the theme before first paint, without waiting for app.js.
   (function () {
-    var salvo = localStorage.getItem("tema");
-    var tema = salvo || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-    document.documentElement.setAttribute("data-theme", tema);
+    var saved = localStorage.getItem("theme");
+    var theme = saved || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", theme);
   })();
 </script>
 <link rel="stylesheet" href="./assets/style.css?v=__SITE_VERSION__">
@@ -21,18 +21,18 @@
     <aside class="sidebar">
       <p class="sidebar__brand">IGOR CARVALHO</p>
       <p class="sidebar__tagline">notas de engenharia · software &amp; IA</p>
-      <div class="busca">
-        <input type="search" id="busca-artigos" class="busca__campo" placeholder="Buscar artigos…" aria-label="Buscar artigos pelo título">
+      <div class="search">
+        <input type="search" id="search-articles" class="search__field" placeholder="Buscar artigos…" aria-label="Buscar artigos pelo título">
       </div>
       <nav>
         <!-- itens montados em runtime por assets/app.js a partir de articles/manifest.json -->
       </nav>
-      <p class="busca__vazio" hidden>Nenhum artigo encontrado.</p>
+      <p class="search__empty" hidden>Nenhum artigo encontrado.</p>
       <div class="sidebar__footer">
-        <button id="toggle-tema" class="theme-toggle" type="button">☾ tema escuro</button>
+        <button id="toggle-theme" class="theme-toggle" type="button">☾ tema escuro</button>
       </div>
     </aside>
-    <main id="conteudo">
+    <main id="content">
       <!-- conteúdo do artigo é injetado aqui via fetch (assets/app.js) -->
     </main>
   </div>

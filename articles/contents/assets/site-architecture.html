@@ -1,0 +1,31 @@
+<article class="sheet">
+  <div class="stamp">igor carvalho · vol. 1 · site architecture</div>
+
+  <div class="running-head"><span>Igor Carvalho</span><span>Site Architecture</span></div>
+
+  <header class="titleblock">
+    <h1>Site Architecture</h1>
+    <p class="subtitle">A static site with no build step, no framework, and no excuse to be slow</p>
+    <p class="meta"><b>Format</b> · HTML + CSS + vanilla JS · Hosting: GitHub Pages</p>
+  </header>
+
+  <section class="abstract">
+    <h2>Summary</h2>
+    <p>This site is a deliberately simple engineering experiment: every page is an isolated HTML fragment, fetched on demand and injected into a single shell page. There's no bundler, no <code>node_modules</code>, no build step — just static files the browser already understands. The result is a "book" where every sidebar tab is a chapter, loaded in milliseconds and addressable by URL.</p>
+  </section>
+
+  <h2 id="s1">1. Why this shape exists</h2>
+  <p>Most static-site generators solve a problem this site doesn't have: thousands of pages, taxonomies, RSS, full-text search. Here the goal is different — a handful of technical articles, published with <code>git push</code> and nothing else. A build framework for that would be a truck to buy bread.</p>
+  <p>The architecture is as direct as it gets: <code>index.html</code> is the shell (sidebar + content area); every article lives as its own folder under <code>/articles/&lt;slug&gt;/</code>, with an <code>index.html</code> entry point and a <code>manifest.json</code> describing its children (if any); a vanilla-JS router fetches the right fragment and injects it into the shell, syncing the URL hash so the browser's back button and a hard refresh both keep working.</p>
+
+  <h2 id="s2">2. Sections and sub-sections</h2>
+  <p>Every top-level entry in the sidebar is a folder with an <code>index.html</code> and a <code>manifest.json</code>. When that manifest is empty, the folder is a single flat article — nothing else is rendered. When it lists entries, those entries must be real files living in that same folder's own <code>assets/</code> directory; a section's manifest is never allowed to point outside its own folder. This page is itself an example: it's a child of the <b>Contents</b> section, fetched from <code>articles/contents/assets/site-architecture.html</code>, listed in <code>articles/contents/manifest.json</code>.</p>
+
+  <h2 id="s3">3. Navigation</h2>
+  <p>Two independent navigation layers exist side by side: a site-wide "next/back" pager (driven by <code>articles/sequence.json</code>) chains together the top-level sections in reading order, while a per-section pager cycles between siblings within the same folder using that folder's own <code>manifest.json</code>. Every child page also carries a link back up to the site's root <b>Contents</b> page, so you're never more than one click from the index no matter how deep you are.</p>
+
+  <footer class="colophon">
+    <span>igor carvalho · site architecture</span>
+    <span>published as static HTML · no build</span>
+  </footer>
+</article>

@@ -1,0 +1,30 @@
+<article class="sheet">
+  <div class="stamp">igor carvalho · vol. 1 · design system</div>
+
+  <div class="running-head"><span>Igor Carvalho</span><span>Design System</span></div>
+
+  <header class="titleblock">
+    <h1>Design System</h1>
+    <p class="subtitle">One stylesheet, two themes, and an "engineering preprint" anatomy</p>
+    <p class="meta"><b>Format</b> · a single centralized <code>assets/style.css</code></p>
+  </header>
+
+  <section class="abstract">
+    <h2>Summary</h2>
+    <p>Every page on this site — the shell and every article fragment — obeys one stylesheet. There is no per-article CSS beyond an occasional inline <code>style=""</code> for a one-off tweak. This page documents the two color themes and the typographic anatomy that every dense article follows.</p>
+  </section>
+
+  <h2 id="s1">1. Palette — "Onsen"</h2>
+  <p>Two themes share the same warm, hot-spring-inspired palette: <b>Onsen Day</b> (light) leans into a linen-toned paper with terracotta accents, and <b>Onsen Night</b> (dark) mirrors it in deep warm browns. Both are defined as CSS custom properties — <code>--desk</code>, <code>--paper</code>, <code>--ink</code>, <code>--muted</code>, <code>--rule</code>, <code>--accent</code>, <code>--danger</code>, <code>--warn</code>, <code>--code-bg</code>, <code>--code-rule</code>, <code>--shadow</code> — so any new color in CSS or inline SVG has to reuse one of these variables rather than hardcoding a hex value. Contrast against text is checked with the WCAG relative-luminance formula every time a color changes, not assumed.</p>
+
+  <h2 id="s2">2. Typography</h2>
+  <p>Body text and headings use a serif (Charter, falling back through Georgia to Times New Roman); code, the sidebar, and running heads use a system monospace stack. The scale is driven from a single root <code>font-size</code> that steps up across three breakpoints (mobile/tablet/desktop) — since nearly everything else on the page is sized in <code>rem</code>, the whole site's type, spacing, and sidebar scale together from that one value.</p>
+
+  <h2 id="s3">3. Article anatomy</h2>
+  <p>Dense articles share a fixed set of classes modeled on an arXiv preprint: <code>.sheet</code> (the card), <code>.stamp</code> (the vertical rotated label), <code>.running-head</code>, <code>header.titleblock</code> (title, subtitle, author, meta), <code>section.abstract</code>, numbered <code>h2</code>/<code>h3</code>, <code>figure.listing</code> for code, <code>figure.fig</code> for diagrams, and <code>footer.colophon</code> for the closing byline. Sections with children — like this one — additionally get a JS-rendered "In this section" list and a pager, both computed from that section's <code>manifest.json</code> rather than hand-typed.</p>
+
+  <footer class="colophon">
+    <span>igor carvalho · design system</span>
+    <span>published as static HTML · no build</span>
+  </footer>
+</article>
