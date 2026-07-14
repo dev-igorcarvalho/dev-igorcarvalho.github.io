@@ -16,14 +16,14 @@
 
   <h2 id="s1">1. Por que esse formato existe</h2>
   <p>A maioria dos geradores de blog estático resolve um problema que este site não tem: milhares de páginas, taxonomias, RSS, busca full-text. Aqui o objetivo é outro — um punhado de artigos técnicos, publicados com <code>git push</code> e nada mais. Um framework de build para isso seria como levar um caminhão para comprar pão.</p>
-  <p>A arquitetura, então, é a mais direta possível: <code>index.html</code> é a casca (sidebar + área de conteúdo); cada artigo vive em <code>/artigos/*.html</code> como um fragmento solto, sem <code>&lt;html&gt;</code> nem <code>&lt;head&gt;</code> próprios; e um roteador em Vanilla JS busca o fragmento certo e o injeta na casca, sincronizando o hash da URL para que o botão voltar do navegador e o F5 continuem funcionando.</p>
+  <p>A arquitetura, então, é a mais direta possível: <code>index.html</code> é a casca (sidebar + área de conteúdo); cada artigo vive em <code>/articles/*.html</code> como um fragmento solto, sem <code>&lt;html&gt;</code> nem <code>&lt;head&gt;</code> próprios; e um roteador em Vanilla JS busca o fragmento certo e o injeta na casca, sincronizando o hash da URL para que o botão voltar do navegador e o F5 continuem funcionando. A própria sidebar é montada em runtime a partir de <code>articles/manifest.json</code> — adicionar um capítulo novo é criar o arquivo e somar uma linha nesse manifesto.</p>
 
   <h2 id="s2">2. Como a navegação funciona</h2>
   <p>O trecho abaixo é, literalmente, o coração do roteador deste site — a mesma função que acabou de trazer este parágrafo até a sua tela:</p>
 
   <figure class="listing">
 <pre><code>function carregarArtigo(nomeArtigo) {
-  fetch("./artigos/" + nomeArtigo + ".html")
+  fetch("./articles/" + nomeArtigo + ".html")
     .then(function (resposta) {
       if (!resposta.ok) throw new Error("404");
       return resposta.text();
@@ -46,7 +46,7 @@
       <div class="fluxo__seta">→</div>
       <div class="fluxo__caixa">location.hash = "artigo"</div>
       <div class="fluxo__seta">→</div>
-      <div class="fluxo__caixa">fetch('./artigos/artigo.html')</div>
+      <div class="fluxo__caixa">fetch('./articles/artigo.html')</div>
       <div class="fluxo__seta">→</div>
       <div class="fluxo__caixa">innerHTML em #conteudo</div>
     </div>

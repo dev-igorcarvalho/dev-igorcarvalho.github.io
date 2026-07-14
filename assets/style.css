@@ -1,6 +1,6 @@
 /* =========================================================================
    Livro de Abas — design system centralizado (light + dark, paleta onsen)
-   Todo o shell (index.html) e todo fragmento em /artigos devem obedecer
+   Todo o shell (index.html) e todo fragmento em /articles devem obedecer
    este arquivo. Customização pontual só via style="" inline no artigo.
    ========================================================================= */
 
@@ -11,17 +11,17 @@
 
 /* ---- Tema claro: "Onsen Day" ---- */
 :root[data-theme="light"]{
-  --desk:#ede4d6;
-  --paper:#fbf6ee;
-  --ink:#2b2119;
-  --muted:#75665a;
-  --rule:#ddccb8;
-  --accent:#8a4a26;
-  --danger:#8c3b2e;
-  --warn:#8a641f;
-  --code-bg:#f2e9db;
-  --code-rule:#e2d4bd;
-  --shadow:0 1px 2px rgba(43,33,25,.08),0 18px 50px rgba(43,33,25,.10);
+  --desk:#f0e0c4;
+  --paper:#fdf4e2;
+  --ink:#332012;
+  --muted:#8a6a4c;
+  --rule:#e6cd9f;
+  --accent:#b1501f;
+  --danger:#a3341f;
+  --warn:#a06a12;
+  --code-bg:#f7e9cd;
+  --code-rule:#ecd6a9;
+  --shadow:0 1px 2px rgba(74,44,20,.10),0 18px 50px rgba(74,44,20,.13);
 }
 
 /* ---- Tema escuro: "Onsen Night" ---- */

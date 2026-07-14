@@ -33,13 +33,41 @@
     botaoTema.addEventListener("click", alternarTema);
   }
 
+  // ---------- Sidebar: montada em runtime a partir de articles/manifest.json ----------
+
+  function montarSidebar(itens) {
+    if (!nav) return;
+    nav.innerHTML = "";
+    itens.forEach(function (item) {
+      var link = document.createElement("a");
+      link.href = "#" + item.slug;
+      link.setAttribute("data-article", item.slug);
+      link.textContent = item.titulo;
+      nav.appendChild(link);
+    });
+  }
+
+  function carregarManifesto() {
+    return fetch("./articles/manifest.json")
+      .then(function (resposta) {
+        if (!resposta.ok) throw new Error("manifest indisponível");
+        return resposta.json();
+      })
+      .then(montarSidebar)
+      .catch(function () {
+        if (nav) {
+          nav.innerHTML = '<p class="erro-carga" style="margin:0;padding:.75rem">Não foi possível carregar a lista de artigos.</p>';
+        }
+      });
+  }
+
   // ---------- Router de artigos ----------
 
   function marcarLinkAtivo(nomeArtigo) {
     if (!nav) return;
-    var links = nav.querySelectorAll("a[data-artigo]");
+    var links = nav.querySelectorAll("a[data-article]");
     links.forEach(function (link) {
-      link.classList.toggle("active", link.getAttribute("data-artigo") === nomeArtigo);
+      link.classList.toggle("active", link.getAttribute("data-article") === nomeArtigo);
     });
   }
 
@@ -53,7 +81,7 @@
   }
 
   function carregarArtigo(nomeArtigo) {
-    fetch("./artigos/" + nomeArtigo + ".html")
+    fetch("./articles/" + nomeArtigo + ".html")
       .then(function (resposta) {
         if (!resposta.ok) throw new Error("404");
         return resposta.text();
@@ -75,10 +103,10 @@
 
   if (nav) {
     nav.addEventListener("click", function (evento) {
-      var link = evento.target.closest("a[data-artigo]");
+      var link = evento.target.closest("a[data-article]");
       if (!link) return;
       evento.preventDefault();
-      var nomeArtigo = link.getAttribute("data-artigo");
+      var nomeArtigo = link.getAttribute("data-article");
       if (location.hash.slice(1) === nomeArtigo) {
         carregarArtigo(nomeArtigo);
       } else {
@@ -88,5 +116,5 @@
   }
 
   window.addEventListener("hashchange", carregarDoHash);
-  carregarDoHash();
+  carregarManifesto().then(carregarDoHash);
 })();
