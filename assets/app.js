@@ -5,6 +5,7 @@
 
   var CHAVE_TEMA = "tema";
   var ARTIGO_PADRAO = "about";
+  var VERSAO = window.__SITE_VERSION__ || "dev";
   var conteudo = document.getElementById("conteudo");
   var nav = document.querySelector(".sidebar nav");
   var botaoTema = document.getElementById("toggle-tema");
@@ -82,7 +83,7 @@
   }
 
   function carregarManifesto() {
-    return fetch("./articles/manifest.json")
+    return fetch("./articles/manifest.json?v=" + VERSAO)
       .then(function (resposta) {
         if (!resposta.ok) throw new Error("manifest indisponível");
         return resposta.json();
@@ -115,7 +116,7 @@
   }
 
   function carregarArtigo(nomeArtigo) {
-    fetch("./articles/" + nomeArtigo + ".html")
+    fetch("./articles/" + nomeArtigo + ".html?v=" + VERSAO)
       .then(function (resposta) {
         if (!resposta.ok) throw new Error("404");
         return resposta.text();

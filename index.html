@@ -14,7 +14,7 @@
     document.documentElement.setAttribute("data-theme", tema);
   })();
 </script>
-<link rel="stylesheet" href="./assets/style.css">
+<link rel="stylesheet" href="./assets/style.css?v=__SITE_VERSION__">
 </head>
 <body>
   <div class="app-shell">
@@ -36,6 +36,7 @@
       <!-- conteúdo do artigo é injetado aqui via fetch (assets/app.js) -->
     </main>
   </div>
-  <script src="./assets/app.js"></script>
+  <script>window.__SITE_VERSION__ = "__SITE_VERSION__";</script>
+  <script src="./assets/app.js?v=__SITE_VERSION__"></script>
 </body>
 </html>
