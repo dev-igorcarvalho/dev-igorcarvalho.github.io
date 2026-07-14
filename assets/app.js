@@ -4,7 +4,7 @@
   "use strict";
 
   var CHAVE_TEMA = "tema";
-  var ARTIGO_PADRAO = "boas-vindas";
+  var ARTIGO_PADRAO = "about";
   var conteudo = document.getElementById("conteudo");
   var nav = document.querySelector(".sidebar nav");
   var botaoTema = document.getElementById("toggle-tema");
