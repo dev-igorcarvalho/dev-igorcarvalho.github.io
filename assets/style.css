@@ -135,7 +135,7 @@ main#conteudo{
 /* ===== Sheet / artigo (anatomia "engineering preprint") ===== */
 .sheet{
   position:relative;
-  max-width:27.54rem; margin:clamp(.75rem,4vw,2.5rem) auto;
+  max-width:35.80rem; margin:clamp(.75rem,4vw,2.5rem) auto;
   background:var(--paper);
   border:1px solid var(--rule); border-radius:2px;
   box-shadow:var(--shadow);
