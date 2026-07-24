@@ -1,0 +1,241 @@
+<article class="sheet">
+  <div class="stamp">preprint · cs.SE · rev. 1 · july 2026 · draft</div>
+
+  <div class="running-head"><span>Engineering Preprint</span><span>Curated Platform Packages</span></div>
+
+  <header class="titleblock">
+    <h1>Curated Platform Packages: A Small, Composable Standard Library for Context-Driven Systems</h1>
+    <p class="subtitle">Specifying the boring half of P3 — reusable, agent-legible infrastructure primitives shared across vertical modules, and the amortized economics that justify curating them</p>
+    <p class="author">Igor Barbosa de Carvalho<span class="affil"> · <a rel="author me" href="https://www.linkedin.com/in/igor-carvalho-se/?locale=en-US">linkedin.com/in/igor-carvalho-se</a></span></p>
+    <p class="meta"><b>Revision 1</b> · July 2026 · Go ≥ 1.21 · Companion to <a href="#context-driven-design">Context-Driven Design</a> · Status: working draft</p>
+  </header>
+
+  <section class="abstract">
+    <h2>Abstract</h2>
+    <p><a href="#context-driven-design">Context-Driven Design</a> (CDD) [1] resolves <i>where</i> code lives: a feature is a vertical module, the platform beneath it is deliberately thin, and P3 requires that thin layer to carry "zero business vocabulary." What CDD leaves unresolved is <i>what already exists</i> — nothing in its six principles stops two modules, or two agent sessions authoring those modules months apart, from independently hand-rolling their own error type, their own config loader, their own graceful-shutdown routine. This is not hypothetical: three of the nine gaps CDD's own reference implementation audited against itself — the lifecycle defects (G2), the error fall-through (G3), and the untestable concrete coupling (G6) — are instances of exactly this failure mode, discovered inside a paper explicitly designed to avoid it. This paper proposes <i>Curated Platform Packages</i> (CPP): a small number of hand-reviewed, generic, single-purpose Go packages held at <code>pkg/</code>, admitted by a four-part test (§3) that extends P3's "zero business vocabulary" rule to infrastructure code generally, and made discoverable to coding agents through machine-legible package headers and an explicit reuse-before-writing clause (§5). We give a worked catalogue of eight reference packages (§9) covering error handling, structured logging, configuration, lifecycle, database access, and migrations; a governance protocol for admitting and deprecating packages without the library becoming a second god-object (§7); and an economic argument — the <i>Library Break-Even</i> (§6) — for when curation stops being premature abstraction and starts paying for itself, extending CDD's own Feature Context Footprint metric to the case of shared, cached, repeatedly-read dependencies rather than freshly generated code. We close by proposing pkg/ as a deliberate, narrow instance of Evans's Shared Kernel [2] — dangerous when applied to domain models, safe here precisely because P3 already forbids the domain vocabulary that makes sharing dangerous.</p>
+    <p class="keywords"><b>Keywords —</b> Go; internal standard library; shared kernel; vertical slice architecture; LLM coding agents; software reuse economics; developer experience; prompt caching; context-driven design.</p>
+  </section>
+
+  <nav class="toc">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#c1">1. Introduction</a></li>
+      <li><a href="#c2">2. Background and Positioning</a></li>
+      <li><a href="#c3">3. The Three-Way Partition</a></li>
+      <li><a href="#c4">4. Package Design Idioms</a></li>
+      <li><a href="#c5">5. Discoverability for Agents</a></li>
+      <li><a href="#c6">6. Economics: The Library Break-Even</a></li>
+      <li><a href="#c7">7. Governance: Admission and Deprecation</a></li>
+      <li><a href="#c8">8. Relation to Context-Driven Design</a></li>
+      <li><a href="#c9">9. Worked Catalogue</a></li>
+      <li><a href="#c10">10. Trade-off Analysis</a></li>
+      <li><a href="#c11">11. Conclusion and Future Work</a></li>
+      <li class="refs"><a href="#refs">References</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="c1">1. Introduction</h2>
+  <p><a href="#context-driven-design">Context-Driven Design</a> [1] makes a sharp argument: an architecture optimized for a finite-context reader — human or machine — should minimize how many places a change touches. Its answer is the vertical module: one folder per feature, owning its rules, its queries, its transport, its templates. The platform beneath it is kept deliberately boring (P3), and wiring is compile-time and explicit (P4) precisely so that nothing magic stands between a module and the infrastructure it depends on.</p>
+  <p>That design closes the question of <i>placement</i> and opens a different one: <i>provenance</i>. When a new module needs to load configuration from the environment, wrap a database error with an operation trace, or shut down cleanly on <code>SIGTERM</code>, where does that code come from? CDD's platform contract (its Listing 2, the <code>Container</code> struct) supplies live infrastructure — a router, a connection pool, a logger instance — but it says nothing about the <i>code that knows how to use them correctly</i>. In a codebase written module-by-module by a coding agent operating under P4's "the compiler is the dependency injector," the default answer is: that code gets written again, inside the module, every time it is needed. Locality of behavior is preserved — the code is right there, in the one folder P1 asks it to be in — but at the cost of an invisible tax: the same twenty lines of graceful-shutdown boilerplate, or the same domain-error type with a slightly different field name, re-derived per feature, per session, occasionally per agent, with no guarantee any two derivations agree.</p>
+  <p>The evidence that this tax is real is not conjectural — it sits inside CDD's own worked example. §10 of that paper audits its reference implementation against its own six principles and finds nine gaps. Read the ledger with an eye for provenance rather than symptom, and a pattern appears: <span class="gid">G2</span> (a <code>Fatalf</code> inside a goroutine that skips every deferred cleanup, a fragile <code>!=</code> error comparison, no server timeouts) is not an <code>auth</code>-module bug — it is generic process-lifecycle code, hand-written once, inside a <code>main.go</code> that had no library to call instead. <span class="gid">G3</span> (a failed login falling through into the success redirect) is exhaustive-branching discipline that a shared response-writing helper would have made structurally impossible to skip. <span class="gid">G6</span> (a service bound to a concrete repository, unable to honor the testing story the prose promised) is a consumer-side-interface convention that a template or a linter, not tribal memory, should enforce. None of these three gaps is a business-logic defect. All three are boring, generic, and — this paper's central claim — <i>exactly the class of code that should never be written twice.</i></p>
+  <p>This paper specifies that missing layer. Curated Platform Packages (CPP) are a small set of hand-reviewed Go packages held at <code>pkg/</code>, sitting beside <code>internal/platform</code> but distinct from it: platform is <i>live infrastructure</i> a module borrows through the Container; <code>pkg/</code> is <i>compiled-in behavior</i> a module imports directly, the same way it imports the standard library. The contribution is not "write a utils folder" — every codebase already has one, and most decay into exactly the dumping ground CDD's P3 was written to prevent platform from becoming. The contribution is an admission test that keeps the library small on purpose (§3), a set of idioms that make each package trivially auditable in isolation (§4), a discoverability protocol that lets an agent find a package before reinventing it rather than after (§5), and an economic argument for why the curation effort is worth it once a package crosses a small, computable usage threshold (§6).</p>
+
+  <h2 id="c2">2. Background and Positioning</h2>
+  <p><b>The Go <code>pkg/</code> convention, and its failure mode.</b> A top-level <code>pkg/</code> for code "safe for external use" is old Go folklore, popularized by Bourgon's widely cited note on repository structure [5] and canonized informally by the community <code>project-layout</code> repository [6] — itself contested precisely because it prescribes a folder without prescribing an admission rule. In practice, an undisciplined <code>pkg/</code> becomes the same god-object CDD's P3 warns against for <code>internal/platform</code>: a junk drawer that accretes one export per contributor's convenience, coupling every module to it by habit rather than by need. This paper's position is that the folder was never the problem — the missing admission test was. §3 supplies one.</p>
+  <p><b>Shared Kernel.</b> Evans names the pattern of two bounded contexts explicitly agreeing to share a small subset of code, with the caveat that the shared subset must stay small, changes must be negotiated, and — critically — it must not carry the domain model of either context, on pain of recoupling what bounded contexts exist to decouple [2]. CDD already prohibits exactly that vocabulary from crossing into its platform layer (P3); this paper's claim is that the same prohibition, applied to a library modules pull from rather than a container modules are handed, is what makes a Shared Kernel safe to use as pervasively as an internal standard library rather than sparingly as Evans' original warning implies. §8 makes the mapping precise.</p>
+  <p><b>LLM coding agents change the calculus, not the principle.</b> "Don't repeat yourself below a threshold" is old advice — Go's own proverb, "a little copying is better than a little dependency" [3], counsels the opposite bias for a reason: premature abstraction is a real cost, and CDD itself invokes the proverb to justify accepting duplication of near-identical data structures across bounded modules. Nothing here overturns that. What changes is the threshold's shape. A human engineer writing the same lifecycle boilerplate for the third time notices the repetition and feels the itch to extract it. An agent operating one module at a time, each session bounded by CDD's own context budget (P6), has no memory of the first two derivations unless something in the repository tells it they exist. Left alone, the proverb's "little copying" silently compounds past "little" — not from bad judgment, but from the absence of the very continuity a human maintainer supplies for free. §5 and §6 give that continuity back.</p>
+
+  <h2 id="c3">3. The Three-Way Partition</h2>
+  <p>CDD draws one boundary: module versus platform, with dependencies flowing one way (P3). This paper draws a second boundary inside "platform," splitting it into <i>live infrastructure</i> a module receives (the <code>Container</code>) and <i>compiled-in behavior</i> a module imports (<code>pkg/</code>). Figure 1 gives the resulting topology and its one new rule: <code>pkg/</code> is a leaf. It may import the standard library and a short, explicitly allow-listed set of external dependencies; it may never import anything under <code>internal/</code>. Enforcement is the same mechanism CDD already prescribes for its facade fence (G4, §10.1) — a single <code>depguard</code>/<code>gomodguard</code> rule, extended by one line: <code>pkg/**</code> may not import <code>internal/**</code>, full stop. A package that needs something module-specific to compile has failed the test in the first place (A1, below) and belongs inside the module, not in the library.</p>
+
+  <figure class="fig">
+    <svg viewBox="0 0 760 460" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Two module boxes at the top import both internal/platform in the middle and pkg packages at the bottom directly; internal/platform also imports pkg; pkg imports nothing internal, marked as a leaf">
+      <defs>
+        <marker id="cppah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0L10,5L0,10z" fill="var(--ink)"/>
+        </marker>
+      </defs>
+      <g font-family="ui-monospace,SF Mono,Menlo,Consolas,monospace" font-size="12" fill="var(--ink)">
+        <!-- module boxes -->
+        <rect x="60"  y="16" width="270" height="50" rx="3" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.3"/>
+        <text x="195" y="37" text-anchor="middle" font-weight="700">internal/auth</text>
+        <text x="195" y="54" text-anchor="middle" font-size="10" fill="var(--muted)">consumer of pkg/ and platform</text>
+
+        <rect x="430" y="16" width="270" height="50" rx="3" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.3"/>
+        <text x="565" y="37" text-anchor="middle" font-weight="700">internal/billing</text>
+        <text x="565" y="54" text-anchor="middle" font-size="10" fill="var(--muted)">same anatomy — zero imports from auth</text>
+
+        <!-- platform box -->
+        <rect x="210" y="140" width="340" height="56" rx="3" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.3"/>
+        <text x="380" y="162" text-anchor="middle" font-weight="700" font-size="13">internal/platform · Container</text>
+        <text x="380" y="181" text-anchor="middle" font-size="10.5" fill="var(--muted)">live infra: Echo · DB · Logger · Tracer</text>
+
+        <!-- pkg box -->
+        <rect x="60" y="330" width="640" height="98" rx="4" fill="none" stroke="var(--rule)" stroke-dasharray="4 4"/>
+        <text x="380" y="352" text-anchor="middle" font-weight="700" font-size="12" fill="var(--muted)">pkg/ — compiled-in, imported directly, zero business vocabulary (A1)</text>
+        <g font-size="10.3">
+          <rect x="76"  y="366" width="86" height="46" rx="2" fill="var(--paper)" stroke="var(--rule)"/><text x="119" y="384" text-anchor="middle">must</text><text x="119" y="399" text-anchor="middle" font-size="9" fill="var(--muted)">fail-fast</text>
+          <rect x="172" y="366" width="86" height="46" rx="2" fill="var(--paper)" stroke="var(--rule)"/><text x="215" y="384" text-anchor="middle">apperr</text><text x="215" y="399" text-anchor="middle" font-size="9" fill="var(--muted)">errors</text>
+          <rect x="268" y="366" width="86" height="46" rx="2" fill="var(--paper)" stroke="var(--rule)"/><text x="311" y="384" text-anchor="middle">logger</text><text x="311" y="399" text-anchor="middle" font-size="9" fill="var(--muted)">slog</text>
+          <rect x="364" y="366" width="86" height="46" rx="2" fill="var(--paper)" stroke="var(--rule)"/><text x="407" y="384" text-anchor="middle">config</text><text x="407" y="399" text-anchor="middle" font-size="9" fill="var(--muted)">env→struct</text>
+          <rect x="460" y="366" width="86" height="46" rx="2" fill="var(--paper)" stroke="var(--rule)"/><text x="503" y="384" text-anchor="middle">lifecycle</text><text x="503" y="399" text-anchor="middle" font-size="9" fill="var(--muted)">LIFO stop</text>
+          <rect x="556" y="366" width="86" height="46" rx="2" fill="var(--paper)" stroke="var(--rule)"/><text x="599" y="384" text-anchor="middle">database</text><text x="599" y="399" text-anchor="middle" font-size="9" fill="var(--muted)">client+tx</text>
+        </g>
+
+        <!-- arrows: modules -> platform -->
+        <line x1="220" y1="66"  x2="330" y2="138" stroke="var(--ink)" stroke-width="1.2" marker-end="url(#cppah)"/>
+        <line x1="540" y1="66"  x2="440" y2="138" stroke="var(--ink)" stroke-width="1.2" marker-end="url(#cppah)"/>
+        <!-- arrows: modules -> pkg directly -->
+        <line x1="150" y1="66"  x2="120" y2="328" stroke="var(--ink)" stroke-width="1.1" stroke-dasharray="2 3" marker-end="url(#cppah)"/>
+        <line x1="620" y1="66"  x2="600" y2="328" stroke="var(--ink)" stroke-width="1.1" stroke-dasharray="2 3" marker-end="url(#cppah)"/>
+        <!-- arrow: platform -> pkg -->
+        <line x1="380" y1="196" x2="380" y2="328" stroke="var(--ink)" stroke-width="1.2" marker-end="url(#cppah)"/>
+        <!-- forbidden reverse -->
+        <text x="380" y="300" text-anchor="middle" font-size="16" fill="var(--danger)" font-weight="700">×</text>
+        <text x="380" y="316" text-anchor="middle" font-size="9.5" fill="var(--muted)">pkg/ never imports internal/**</text>
+
+        <text x="380" y="450" text-anchor="middle" font-size="11" font-style="italic" fill="var(--muted)" font-family="Charter,Georgia,serif">Dashed arrows: modules import pkg/ directly, bypassing the Container — pkg/ is a library, not injected infrastructure.</text>
+      </g>
+    </svg>
+    <figcaption><b>Figure 1.</b> The three-way partition. <code>internal/platform</code> still carries live infrastructure exactly as in CDD; <code>pkg/</code> is a new, third place — a leaf both modules and the platform may import, but which imports nothing back.</figcaption>
+  </figure>
+
+  <p>Admission to <code>pkg/</code> is a conjunction of four tests, deliberately conservative because the failure mode of a shared library is asymmetric: an unwarranted rejection costs one duplicated file; an unwarranted admission costs a coupling point every module downstream must now carry forever.</p>
+  <ol class="plain">
+    <li><b><span class="gid">A1</span> — Zero business vocabulary.</b> The same test P3 already applies to <code>internal/platform</code>, applied here to code modules import rather than infrastructure they are handed. A type named <code>Invoice</code> or <code>Session</code> disqualifies a package on sight; a type named <code>Error</code> or <code>Manager</code> does not.</li>
+    <li><b><span class="gid">A2</span> — Parametric, not particular.</b> The package must work for any caller without editing the package — via generics (<code>must.Get[T]</code>), a consumer-declared interface, or functional options — never via a switch statement keyed on which module is calling.</li>
+    <li><b><span class="gid">A3</span> — Leaf-only imports.</b> Standard library and a short allow-list of externals; never <code>internal/**</code>. Mechanically enforced (§3, above), not culturally hoped for.</li>
+    <li><b><span class="gid">A4</span> — Two call sites, not one.</b> A package earns admission on its second occurrence, not its first. The Go proverb [3] governs below the threshold — a single module's need for a helper stays inside that module, plainly duplicable, no library required. Extraction on the second sighting, rather than the classic "rule of three," is deliberate: agent-authored duplication is cheaper to introduce and easier to miss in review than human-authored duplication (§2), so the threshold that keeps copying "little" is lower here than folklore usually sets it.</li>
+  </ol>
+
+  <h2 id="c4">4. Package Design Idioms</h2>
+  <p>A2's "parametric, not particular" test has teeth only if the packages actually practice it. Four idioms recur across a working catalogue built on this pattern, each chosen for the same reason: keep the package's exported surface small enough that using it costs less context than writing the equivalent inline ever would (the exact comparison §6 formalizes).</p>
+  <p><b>Generics over reflection for the "fail fast or continue" shape.</b> Bootstrap code is full of the pattern "run this, and if it errors, the process should not start." A generic helper collapses the pattern to a call rather than an <code>if err != nil { log.Fatalf(...) }</code> block repeated at every call site — precisely the class of code whose omission or misuse produced CDD's <span class="gid">G2</span>.</p>
+
+  <figure class="listing">
+<pre><code class="language-go">// pkg/must — fail-fast helpers for mandatory bootstrap operations.
+// Zero business vocabulary (A1); generic over any T (A2).
+func Get[T any](v T, err error) T {
+	if err != nil {
+		log.Fatalf("critical failure: %v", err)
+	}
+	return v
+}
+
+// cmd/api/main.go — the call site is the whole point:
+db := must.Get(database.Open(cfg.DSN))</code></pre>
+    <figcaption><b>Listing 1.</b> A two-line library call replaces a four-line inline guard at every bootstrap site, and — because the check lives in one audited place — a fix to its behavior (say, exiting with a nonzero status vs. panicking) is one edit, not a grep-and-replace across every <code>main.go</code> a codebase has grown.</figcaption>
+  </figure>
+
+  <p><b>Structured errors that satisfy <code>errors.Is</code>/<code>errors.As</code> by construction.</b> A domain error type carrying a machine code, a human message, an operation trace, and an <code>Unwrap</code> method gives every module the same error ergonomics without every module writing its own — and, because the type implements <code>Is</code> by comparing codes rather than pointer identity, a handler can branch on <i>kind</i> of failure without needing the exact sentinel value that produced it.</p>
+  <p><b>Context-aware logging that extracts correlation fields once.</b> A thin wrapper over <code>log/slog</code> that pulls a fixed set of context keys (trace id, tenant id, correlation id) into every log line removes a second copy-pasted concern: the alternative is each module remembering, or forgetting, to attach the same three fields by hand.</p>
+  <p><b>Functional options for anything with more than one legitimate configuration.</b> A database client that may or may not have a read replica is exactly the shape functional options exist for — <code>WithWriter</code>, <code>WithReader</code> — keeping the zero-argument case trivial while making the two-argument case explicit and self-documenting at the call site, without a constructor that grows a new positional parameter every time a new concern appears.</p>
+  <p>None of these four idioms is novel Go; the contribution is treating them as a closed, curated set rather than a grab-bag each contributor reinvents its own version of — which is exactly the discipline that keeps <code>pkg/</code> from decaying into the junk drawer §2 warned against.</p>
+
+  <h2 id="c5">5. Discoverability for Agents</h2>
+  <p>A library nobody can find is not reused, it is duplicated with extra steps. CDD's Feature Context Footprint (§3.3 of [1]) already argues that a slice's context should be statically enumerable rather than dynamically discovered; the same argument applies one level up, to the library itself. Two mechanisms make <code>pkg/</code> statically enumerable to an agent without requiring it to read every implementation file.</p>
+  <p><b>Machine-legible package headers.</b> Every package file opens with a short, structured comment — title, one-line description, package kind (Utility, Implementation, Package), last-reviewed date — ahead of the ordinary Go doc comment. The header is redundant with well-written prose documentation for a human reader, and that is exactly the point: it is <i>also</i> a fixed-shape record an agent (or a lightweight script) can grep across the whole library in one pass, without parsing Go, to answer "does something already do this?" before writing new code. The same header doubles as the admission record §7's governance process requires — one artifact, two audiences. The mechanism only holds if the header stays honest, though, and staleness fails in either direction: an agent that trusts a lagging header acts on false confidence, and one that has learned not to trust it falls back to reading the implementation anyway — which is precisely the context-window, rate-limit, and context-poisoning cost Listing 2 exists to avoid, paid in full on every package the header was supposed to make cheap. Keeping it honest cannot be left to author memory — it needs a pre-commit or CI hook that fails whenever a package's exported surface changes without a matching header edit, the same enforcement discipline any other statically-checked contract already gets in a CDD codebase.</p>
+
+  <figure class="listing">
+<pre><code class="nohighlight">// ---
+// title: Application Error System
+// description: Custom AppError type for machine-readable codes,
+//   human-readable messages, and error tracing.
+// last_reviewed: 2026-05-03
+// kind: Utility
+// ---
+package apperr</code></pre>
+    <figcaption><b>Listing 2.</b> A structured header above the package declaration, deliberately written as frontmatter — the same delimited key-value block an agent already parses routinely in Markdown, Jekyll, and Hugo — so that answering "does this exist already?" never requires pulling the file's implementation into context: doing so risks exhausting the context window on a large <code>pkg/</code>, burns against a token-per-time-window rate limit for no return, and risks poisoning the context with implementation detail the question never needed. Trivial to grep (<code>grep -rl "description:" pkg/</code>), trivial to keep current, and legible to both a human skimming <code>pkg/</code> for the first time and an agent deciding whether to write <code>errors.go</code> from scratch.</figcaption>
+  </figure>
+
+  <p><b>The reuse-before-writing clause.</b> The agent contract that already governs a CDD codebase (its own equivalent of an <code>AGENTS.md</code>) gains one addition: before authoring any function under a fixed list of headings — error handling, configuration loading, structured logging, graceful shutdown, database access, JSON (de)serialization — the agent greps <code>pkg/</code> for a header whose description matches. It may write a bespoke inline version only if no package exists <i>and</i> the need fails A1 (it is genuinely module-specific); if a package exists but is insufficient, the contract requires extending it in place rather than shadowing it with a parallel inline implementation. This is the missing half of P4: the compiler already guarantees a module cannot wire a dependency that does not exist; this clause guarantees an agent does not silently manufacture one that already does.</p>
+
+  <h2 id="c6">6. Economics: The Library Break-Even</h2>
+  <p>Curation has a cost — someone reviews, tests, and maintains each package — so the decision to extract one should be an economic one, not a taste one. Let <i>w</i> be the expected token cost of an agent authoring a bespoke equivalent inline: not merely the final lines of code, but the realistic cost of drafting, running, and fixing them, which CDD's own gap ledger suggests routinely exceeds the artifact's raw size. Let <i>T</i>(<i>p</i>) be the one-time cost of writing and reviewing package <i>p</i>, and <i>r</i> the marginal cost of a call site referencing it — dominated by <i>T</i><sub>pub</sub>(<i>p</i>), the package's exported surface (signature plus doc comment), since a competent caller reads what a function promises, not how it keeps that promise. For <i>N</i> modules that would otherwise each pay <i>w</i>:</p>
+  <div class="equation">Savings(<i>p</i>, <i>N</i>) = <i>N</i>·<i>w</i> − (<i>T</i>(<i>p</i>) + <i>N</i>·<i>r</i>)<span class="eqno">(1)</span></div>
+  <p>which is positive once <i>N</i> passes the break-even point</p>
+  <div class="equation"><i>N</i>* = <i>T</i>(<i>p</i>) / (<i>w</i> − <i>r</i>)<span class="eqno">(2)</span></div>
+  <p>Two properties of (2) matter more than its precision. First, because <i>r</i> ≈ <i>T</i><sub>pub</sub>(<i>p</i>) is small by design (A2's parametricity keeps exported surfaces narrow) while <i>w</i> includes the iteration cost of getting boilerplate right, the denominator is usually close to <i>w</i> itself — <i>N</i>* tends to be small, on the order of two or three uses, which is precisely A4's admission threshold rather than a coincidence: the admission rule and the economic break-even are the same inequality viewed from two directions. Second, <i>r</i> is paid on <i>every</i> read of the package regardless of <i>N</i>, but production LLM APIs discount repeated, unmodified context through prompt caching — a file that has not changed since the last request is markedly cheaper to include again than one generated fresh in the same turn. A hand-rolled inline block, invented anew in each session, can never benefit from that discount; a stable file at <code>pkg/errors/errors.go</code> structurally can. The Library Break-Even is therefore a lower bound on the case for curation, not the whole of it.</p>
+  <p>This also resolves an apparent tension with CDD's own P6. The Feature Context Footprint (its equation 1) treats every byte a module pulls in — including facades — as pure cost, and a naive reading might charge <code>pkg/</code> imports the same way, penalizing reuse. The resolution is that FCF measures a single feature's <i>read</i> cost, while (1) measures the library's amortized <i>write</i> cost across the codebase's history. A shared package does add a fixed, small term to every importing module's FCF (§8 makes the term explicit) — but it removes a much larger, module-sized term that hand-rolled equivalent code would otherwise have contributed to <i>T</i>(module<sub><i>f</i></sub>) itself. <code>pkg/</code> is not exempt from the context budget; it is how a codebase pays that budget in bulk rather than piecemeal.</p>
+  <p>Translated out of notation, the saving is concrete rather than abstract. Every token an agent does not spend re-deriving <code>apperr</code>'s <code>Unwrap</code> method for the fifth module in a row is a token it spends on that module's actual logic instead — and because production APIs bill per token and throttle per token-per-time-window, the saving is not merely faster, it is cheaper in dollars and it stretches a session further before running into the rate-limit wall §5 already warned about. The header in Listing 2 is what keeps <i>r</i> close to its theoretical floor: an agent that answers "does this exist?" from a nine-line frontmatter block never pays the far larger cost of reading, or worse re-writing, the file behind it, which is exactly the difference between <i>r</i> ≈ <i>T</i><sub>pub</sub>(<i>p</i>) and <i>r</i> ≈ <i>w</i> that (2) depends on holding. Multiply that gap by every call site a package like <code>apperr</code> or <code>lifecycle</code> accumulates, and the sums in (1) stop being a proof about counting and start being a line item on an API bill: fewer tokens drafted, fewer tokens re-read on every subsequent session, and fewer features that stall mid-implementation because an agent spent its budget re-inventing boilerplate <code>pkg/</code> already solved.</p>
+
+  <h2 id="c7">7. Governance: Admission and Deprecation</h2>
+  <p>A library with no gate decays into the dumping ground §2 described; a library with too heavy a gate never gets used. The process kept here is deliberately lightweight, sized for a small team or a solo maintainer working alongside agents rather than a platform organization with a review board.</p>
+  <ol class="plain">
+    <li><b>Admission.</b> A package proposal is the header of Listing 2 plus a one-paragraph note citing the two call sites that satisfy <span class="gid">A4</span>. No separate design-doc process — the header <i>is</i> the record, kept in the file it documents rather than a wiki that drifts out of sync with it.</li>
+    <li><b>Review.</b> One human maintainer approves. This is the one place this paper insists on a human in the loop unconditionally: §4's idioms are simple, but a package's exported surface is a promise every future module inherits, and a promise is exactly the kind of decision CDD's P4 reserves for something more durable than a single agent's judgment in a single session.</li>
+    <li><b>Deprecation.</b> The header's <code>kind</code> field gains a <code>Deprecated</code> value and a <code>superseded_by</code> pointer; the reuse-before-writing clause (§5) treats a deprecated match as a warning to migrate rather than a green light to import. The package is deleted once its last caller is gone — the same delete-ability discipline P5 already applies to modules, applied here to the library that serves them.</li>
+    <li><b>A living ledger.</b> Known rough edges — "this package's transaction helper hasn't been stress-tested under concurrent panics," say — are tracked as short, file-and-line-anchored notes rather than left as inline <code>TODO</code> comments that rot silently. The ledger is as agent-legible as the headers it sits beside: a fixed structure an automated pass can sweep into tracked issues on a cadence, rather than a comment an agent might overwrite without ever surfacing it for human review.</li>
+  </ol>
+
+  <h2 id="c8">8. Relation to Context-Driven Design</h2>
+  <p>Three of CDD's own mechanisms extend cleanly to accommodate <code>pkg/</code>, and it is worth being precise about each, because the temptation to conflate "shared" with "central" is exactly what CDD's hub-and-spoke discussion (§2 of [1]) already warned against for the Container.</p>
+  <p><b>The Container is unaffected.</b> Nothing here proposes adding fields to <code>server.Container</code> for library packages — <code>pkg/</code> is imported directly by both modules and the platform, never injected, because injection implies a lifecycle and a substitution point that a stateless helper library does not need. The Container stays exactly what CDD's Listing 2 says it is: live infrastructure, nothing else.</p>
+  <p><b>The facade fence gains one clause.</b> G4's import-fence linter, which already keeps sibling modules from importing each other directly, is the same mechanism §3 uses to keep <code>pkg/</code> a leaf. One linter configuration now enforces two rules that were previously two separate concerns: modules talk to modules only through facades, and nothing talks up into <code>internal/</code> from below.</p>
+  <p><b>The Feature Context Footprint gains one term.</b> Equation 1 of [1] is</p>
+  <div class="equation">FCF(<i>f</i>) = <i>T</i>(module<sub><i>f</i></sub>) + <i>T</i>(container) + Σ<sub><i>g</i>∈facades(<i>f</i>)</sub> <i>T</i>(<i>g</i>)</div>
+  <p>and extends, under this proposal, to</p>
+  <div class="equation">FCF′(<i>f</i>) = <i>T</i>(module<sub><i>f</i></sub>) + <i>T</i>(container) + Σ<sub><i>g</i>∈facades(<i>f</i>)</sub> <i>T</i>(<i>g</i>) + Σ<sub><i>p</i>∈pkg(<i>f</i>)</sub> <i>T</i><sub>pub</sub>(<i>p</i>)<span class="eqno">(3)</span></div>
+  <p>using each package's exported surface rather than its full implementation, on the same reasoning as §6's <i>r</i>. Because <i>T</i><sub>pub</sub> is small and <i>bounded independent of module count</i> — the same eight-package catalogue serves every module in the system without growing — the new term is a near-constant addition to every feature's footprint, not a source of the drift P6 exists to catch. A codebase where FCF′ grows unbounded with each new module is telling a different, worse story: that <code>pkg/</code> has stopped being a small shared kernel and started accreting module-specific special cases, which is precisely what <span class="gid">A1</span> exists to forbid before it happens.</p>
+  <p><b>Shared Kernel, made safe by subtraction.</b> Evans's original warning about Shared Kernel is that shared domain code recouples the bounded contexts it crosses, since a change on one side of the boundary now demands negotiation with the other [2]. CDD's P3 already forbids the vocabulary that makes that recoupling possible from ever entering the platform layer; <span class="gid">A1</span> applies the identical prohibition to <code>pkg/</code>. What is shared here is never <i>what the business means</i> — only <i>how to fail fast, log a line, or wrap a transaction</i> — so a change to <code>pkg/errors</code> cannot leak a change in what "billing" or "auth" mean to each other. That is the condition under which a Shared Kernel stops being a hazard to negotiate carefully and becomes an internal standard library, usable as pervasively as the one the Go runtime itself ships.</p>
+
+  <h2 id="c9">9. Worked Catalogue</h2>
+  <p>Table 1 gives a reference set of eight packages, drawn from a working implementation built under exactly this discipline, satisfying all four admission tests of §3. Its size is itself a claim: eight packages is not a framework, and staying near that order of magnitude — resisting the pull toward a ninth, tenth, twentieth package for every convenience a contributor can imagine — is A4's threshold doing its job.</p>
+
+  <table>
+    <caption><b>Table 1.</b> Reference catalogue. "Idiom" cross-references §4; every entry satisfies A1–A3 by construction and A4 by having accumulated real call sites across independent modules.</caption>
+    <thead>
+      <tr><th>Package</th><th>Purpose</th><th>Idiom (§4)</th><th>Admits under</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="mono">must</td><td>Fail-fast bootstrap helpers (<code>Get[T]</code>, <code>Succeed</code>, <code>BeTrue</code>)</td><td>Generics over reflection</td><td>A2, A4 — every <code>main.go</code></td></tr>
+      <tr><td class="mono">apperr</td><td>Domain-agnostic error type: code, message, op trace, <code>Is</code>/<code>Unwrap</code></td><td>Structured errors</td><td>A1, A2 — no domain codes baked in</td></tr>
+      <tr><td class="mono">logger</td><td>Context-aware structured logging over <code>log/slog</code></td><td>Context-aware logging</td><td>A2 — env-driven, no module coupling</td></tr>
+      <tr><td class="mono">config</td><td>Generic env-to-struct loader with test overrides</td><td>Generics (<code>Load[T]</code>)</td><td>A2 — one loader, any config shape</td></tr>
+      <tr><td class="mono">lifecycle</td><td>LIFO graceful-shutdown manager over registered components</td><td>Consumer-declared interface</td><td>A1, A4 — remediates CDD's G2 by construction</td></tr>
+      <tr><td class="mono">database</td><td>Client with writer/reader split, functional options, tx helper</td><td>Functional options</td><td>A2 — zero-config default, explicit opt-in for a reader</td></tr>
+      <tr><td class="mono">json</td><td>Strict decode helpers (reject unknown fields, size limits)</td><td>Generics + edge defense</td><td>A1, A2 — same shape as CDD's BodyLimit guard (§10.2 of [1])</td></tr>
+      <tr><td class="mono">migrator</td><td>Per-module migration registration, one global ledger</td><td>Registry over a shared interface</td><td>A4 — mirrors CDD's own §10.3 resolution of G7</td></tr>
+    </tbody>
+  </table>
+  <p>Table 1 is not closed. These eight are the ones the working implementation this paper draws on happened to accumulate, and the ones worth walking through in print — not a ceiling on what <code>pkg/</code> may ever contain. A concern that clears A1–A4 (§3) belongs in the catalogue regardless of whether it appears above, and a real codebase should expect the list to grow: retry-with-backoff, rate limiting, a cache abstraction, a pub/sub client wrapper are all plausible candidates that simply were not part of this particular system. The caution is not against growth but against the manner of it — §6's break-even and §7's admission gate exist precisely because each new candidate carries the same risk this paper has warned about since §2: a package admitted on convenience rather than accumulated call sites, or one that lets a scrap of domain vocabulary slip into its exported surface, re-couples the modules it touches and turns the Shared Kernel §8 declares safe back into the hazard Evans originally warned against. Every addition to this table earns its place the same way the first eight did — A4's call-site threshold first, a human reviewer second — or it does not belong in <code>pkg/</code> at all.</p>
+
+  <h2 id="c10">10. Trade-off Analysis</h2>
+  <p>Table 2 sets Curated Platform Packages against the two alternatives a codebase actually faces: reinventing infrastructure per module (the status quo an undisciplined CDD codebase drifts toward), and adopting a general-purpose framework that supplies the same concerns but at the price P4 already rejected — reflection, code generation, or a DI container standing between the compiler and the wiring.</p>
+
+  <table>
+    <caption><b>Table 2.</b> Curated packages versus per-module reinvention and versus a general-purpose framework.</caption>
+    <thead>
+      <tr><th>Dimension</th><th>Curated <code>pkg/</code></th><th>Per-module reinvention</th><th>General framework</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Consistency across modules</td><td>Enforced by one reviewed implementation</td><td>Drifts; CDD's own G2/G3/G6</td><td>Enforced, but opaque</td></tr>
+      <tr><td>Compile-time wiring (P4)</td><td>Preserved — plain imports</td><td>Preserved</td><td>Often broken by reflection/DI</td></tr>
+      <tr><td>Context cost per feature</td><td>Small, bounded term (FCF′, §8)</td><td>Paid inline, grows with module count</td><td>Hidden inside framework internals</td></tr>
+      <tr><td>Deletability (P5)</td><td>Package deleted when last caller is gone</td><td>Trivial — but the bug ships with the copy first</td><td>Rarely fully removable</td></tr>
+      <tr><td>Governance overhead</td><td>One header + one reviewer (§7)</td><td>None — and no consistency either</td><td>Heavy; upstream release cycle</td></tr>
+      <tr><td>Fit for agent-authored code</td><td>Grep-discoverable before writing (§5)</td><td>Rediscovered from scratch each session</td><td>Requires framework-specific training</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="c11">11. Conclusion and Future Work</h2>
+  <p>Context-Driven Design answered "where does this code live" with a principle sharp enough to enforce mechanically. This paper answers the question CDD leaves open — "has this code already been written" — with the same posture: a small admission test (§3), idioms that keep each admitted package legible on its own (§4), a discoverability protocol built for an agent's working memory rather than a human's tribal knowledge (§5), and an economic argument for when curation is premature and when it is overdue (§6). The two papers compose rather than compete: CDD keeps a feature's <i>business</i> code contained to one folder; this paper keeps a codebase's <i>boring</i> code from being re-derived, inconsistently, inside every one of those folders. Read together, they cover both halves of P6's context budget — what a module must contain, and what it should never have had to write in the first place.</p>
+  <p>Two lines of future work, chosen to reuse rather than duplicate the empirical program CDD's own conclusion already proposes. First, the FCF regression CDD calls for — agent task-success against FCF and <i>L</i> on matched codebases — extends directly to a within-subjects arm: the same task, the same architecture, with and without a curated <code>pkg/</code>, scoring defect rate against the specific class CDD's own audit surfaced (G2/G3/G6-shaped bugs) rather than defects generally. Second, the Library Break-Even (§6) is currently an estimate; instrumenting real agent sessions for <i>w</i> and <i>r</i> directly — token cost actually spent per boilerplate pattern, with and without a matching package available to find — would turn Equation 2 from a plausible model into a measured one, and would let <span class="gid">A4</span>'s two-call-site threshold be checked against data rather than argued from first principles alone.</p>
+
+  <h2 id="refs" style="border-top:none;padding-top:0;margin-top:2.6rem;font-size:1.05rem;font-variant-caps:all-small-caps;letter-spacing:.18em">References</h2>
+  <ol class="references">
+    <li>I. B. de Carvalho. "<a href="#context-driven-design">Context-Driven Design: Self-Contained Vertical Modules for Go Services under Human and Machine Context Constraints</a>." This collection, rev. 5, July 2026.</li>
+    <li>E. Evans. <i>Domain-Driven Design: Tackling Complexity in the Heart of Software</i> — Shared Kernel pattern. Addison-Wesley, 2003.</li>
+    <li>R. Pike. "Go Proverbs." Gopherfest, 2015.</li>
+    <li>Uber Technologies. <i>Uber Go Style Guide</i>. github.com/uber-go/guide.</li>
+    <li>P. Bourgon. "Go: Best Practices for Production Environments" (repository structure notes). peter.bourgon.org.</li>
+    <li>golang-standards. <i>Standard Go Project Layout</i>. Community repository, contested; cited here as the folklore this paper's admission rule (§3) is meant to replace, not endorse as-is.</li>
+    <li>N. F. Liu, K. Lin, J. Hewitt, A. Paranjape, M. Bevilacqua, F. Petroni, P. Liang. "Lost in the Middle: How Language Models Use Long Contexts." <i>TACL</i>, 2024.</li>
+    <li>I. B. de Carvalho. Personal reference implementation (private, work in progress), 2026 — source of the worked catalogue in §9.</li>
+  </ol>
+
+  <footer class="colophon">
+    <span>engineering preprint · revision 1 · draft, not yet linked from the index</span>
+    <span>i. b. de carvalho · curated platform packages · july 2026</span>
+  </footer>
+</article>

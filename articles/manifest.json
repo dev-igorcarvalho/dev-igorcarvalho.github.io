@@ -1,5 +1,6 @@
 [
   { "slug": "about", "titulo": "About the Author" },
   { "slug": "24-hour-engineer", "titulo": "The 24-Hour Engineer" },
-  { "slug": "context-driven-design", "titulo": "Context-Driven Design" }
+  { "slug": "context-driven-design", "titulo": "Context-Driven Design" },
+  { "slug": "curated-platform-packages", "titulo": "Curated Platform Packages" }
 ]
